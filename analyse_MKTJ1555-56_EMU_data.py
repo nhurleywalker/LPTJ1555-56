@@ -10,10 +10,10 @@ T0 = 59713.512505
 P = 0.02168 # days
 
 def ephem(n):
-    return 59713.512505 + n*P
+    return T0 + n*P
 
 def pulsenum(mjd):
-    return (mjd - 59712.512505) / (n*P)
+    return (mjd - T0) / P
 
 XX = 0
 XY = 1
