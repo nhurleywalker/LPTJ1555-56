@@ -12,12 +12,13 @@ YY = 3
 
 # TODO, load both, take weighted average
 arr = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam15_averaged_cal.leakage.pkl", allow_pickle=True)
+arr2 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam09_averaged_cal.leakage.pkl", allow_pickle=True)
 
 # But I think Q and V are swapped
-It = np.real((arr["DS"][:,:,XX]+arr["DS"][:,:,YY]))
-Qt = np.real((arr["DS"][:,:,XX]-arr["DS"][:,:,YY]))
-Ut = np.real((arr["DS"][:,:,XY]+arr["DS"][:,:,YX]))
-Vt = np.imag((arr["DS"][:,:,XY]-arr["DS"][:,:,YX]))
+It = (np.real((arr["DS"][:,:,XX]+arr["DS"][:,:,YY])) + np.real((arr2["DS"][:,:,XX]+arr2["DS"][:,:,YY]))) / 2
+Qt = (np.real((arr["DS"][:,:,XX]-arr["DS"][:,:,YY])) + np.real((arr2["DS"][:,:,XX]-arr2["DS"][:,:,YY]))) / 2
+Ut = (np.real((arr["DS"][:,:,XY]+arr["DS"][:,:,YX])) + np.real((arr2["DS"][:,:,XY]+arr2["DS"][:,:,YX]))) / 2
+Vt = (np.imag((arr["DS"][:,:,XY]-arr["DS"][:,:,YX])) + np.imag((arr2["DS"][:,:,XY]-arr2["DS"][:,:,YX]))) / 2
 
 # RFI flagging
 It[:,124] = np.nan
