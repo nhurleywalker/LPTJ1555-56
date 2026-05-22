@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from astropy.time import Time
 
+import glob
 import sys
 
 T0 = 59713.512505
@@ -22,6 +23,12 @@ YY = 3
 # TODO find positions in primary beams and take weighted average, correct for beam attenuation
 arr = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam15_averaged_cal.leakage.pkl", allow_pickle=True)
 arr2 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam09_averaged_cal.leakage.pkl", allow_pickle=True)
+
+# Sadly these didn't show the source at all (SNR much more problematic in Stokes I as well)
+#arr = np.load("dynspec/scienceData.EMU_1554-55_band1.SB43773.EMU_1554-55_band1.beam09_averaged_cal.leakage.pkl", allow_pickle=True)
+#arr2 = np.load("dynspec/scienceData.EMU_1554-55_band1.SB43773.EMU_1554-55_band1.beam15_averaged_cal.leakage.pkl", allow_pickle=True)
+#arr = np.load("dynspec/scienceData.EMU_1554-55.SB33284.EMU_1554-55.beam09_averaged_cal.leakage.pkl", allow_pickle=True)
+#arr2 = np.load("dynspec/scienceData.EMU_1554-55.SB33284.EMU_1554-55.beam15_averaged_cal.leakage.pkl", allow_pickle=True)
 
 # But I think Q and V are swapped
 It = (np.real((arr["DS"][:,:,XX]+arr["DS"][:,:,YY])) + np.real((arr2["DS"][:,:,XX]+arr2["DS"][:,:,YY]))) / 2
@@ -150,4 +157,25 @@ ax.set_xlabel("Phase")
 ax.set_ylabel("Mean brightness (mJy)")
 ax.legend(loc=1)
 fig.savefig("Folded_light_curve.png", bbox_inches="tight")
+
+# Load the rest of the .pkl files and calculate RMS and time for non-detections plot
+
+pkls = sorted(glob.glob("dynspec/*RACS*pkl") + glob.glob("dynspec/*VAST*pkl") + glob.glob("dynspec/*SB43773*pkl") + glob.glob("dynspec/*SB33284*pkl"))
+
+mjds = []
+rmss = []
+for pkl in pkls:
+    arr = np.load(pkl, allow_pickle=True)
+    mjds.append(arr["TIMES"][int(len(arr["TIMES"])/2)]/(24*3600))
+    rmss.append(np.nanstd(np.nanmean(np.real((arr["DS"][:,:,XX]+arr["DS"][:,:,YY])),axis=1)))
+
+fig = plt.figure(figsize=(8,5))
+ax = fig.add_subplot(111)
+ax.scatter(mjds, 1000*np.array(rmss), marker='v', color='black', label='1-sigma RMS\n(10s time resolution)')
+ax.set_xlabel("MJD")
+ax.set_ylabel("Flux density (mJy)")
+ax.scatter(T0, 17., color='red', marker='*', label='EMU Pilot detection\n(brightest pulse)')
+ax.errorbar(T0, 17., yerr=1, color='red')
+ax.legend(loc=1)
+fig.savefig("Non-detections_ASKAP.png", bbox_inches="tight")
 
