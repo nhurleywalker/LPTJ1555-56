@@ -15,111 +15,254 @@ def ephem(n):
 def pulsenum(mjd):
     return (mjd - T0) / P
 
+def make_dynspec(data, vmin, vmax, cmap, extent, outname, imwidth=13):
+    fig = plt.figure(figsize=(imwidth,5))
+    ax = fig.add_subplot(111)
+    ax.imshow(data, origin='lower',vmin = vmin, vmax=vmax, aspect='auto', cmap=cmap, extent=extent)
+    ax.set_xlabel("time / s")
+    ax.set_ylabel("frequency / GHz")
+    fig.savefig(outname, bbox_inches="tight")
+    plt.close()
+
+def make_lightcurve(times, lc, vmin, vmax, lw, color, alpha, label, outname, offset=0.0):
+    fig = plt.figure(figsize=(13,5))
+    ax = fig.add_subplot(111)
+    ax.set_ylabel("brightness (mJy/beam)")
+    ax.set_xlabel("time / s")
+    if isinstance(alpha, list):
+        for t, l, w, c, a, lb in zip(times, lc, lw, color, alpha, label):
+            ax.plot(t, l, lw=w, color=c, alpha=a, label=lb)
+    else:
+        ax.plot(times, lc, lw=lw, color=color, alpha=alpha, label=label)
+        t = times
+    for i in range(0, 35):
+        ax.axvline(ephem(i)*24*3600 - offset, alpha=0.4, color='orange')
+    ax.set_xlim(t[0], t[-1])
+    ax.set_ylim(vmin, vmax)
+    ax.legend(loc=1)
+    fig.savefig(outname, bbox_inches="tight")
+
 XX = 0
 XY = 1
 YX = 2
 YY = 3
 
+cmap = { "I" : "viridis",
+         "Q" : "RdBu_r",
+         "U" : "RdBu",
+         "V" : "PRGn" }
+
+lc = { "I" : "black",
+         "Q" : "red",
+         "U" : "blue",
+         "V" : "green" }
 # TODO find positions in primary beams and take weighted average, correct for beam attenuation
-arr = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam15_averaged_cal.leakage.pkl", allow_pickle=True)
+arr1 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam15_averaged_cal.leakage.pkl", allow_pickle=True)
 arr2 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam09_averaged_cal.leakage.pkl", allow_pickle=True)
 
-# Sadly these didn't show the source at all (SNR much more problematic in Stokes I as well)
-#arr = np.load("dynspec/scienceData.EMU_1554-55_band1.SB43773.EMU_1554-55_band1.beam09_averaged_cal.leakage.pkl", allow_pickle=True)
-#arr2 = np.load("dynspec/scienceData.EMU_1554-55_band1.SB43773.EMU_1554-55_band1.beam15_averaged_cal.leakage.pkl", allow_pickle=True)
-#arr = np.load("dynspec/scienceData.EMU_1554-55.SB33284.EMU_1554-55.beam09_averaged_cal.leakage.pkl", allow_pickle=True)
-#arr2 = np.load("dynspec/scienceData.EMU_1554-55.SB33284.EMU_1554-55.beam15_averaged_cal.leakage.pkl", allow_pickle=True)
+freqs_a = arr1["FREQS"]/1.e9
+times_a = arr1["TIMES"]
+times_az = arr1["TIMES"] - arr1["TIMES"][0]
 
-# But I think Q and V are swapped
-It = (np.real((arr["DS"][:,:,XX]+arr["DS"][:,:,YY])) + np.real((arr2["DS"][:,:,XX]+arr2["DS"][:,:,YY]))) / 2
-Qt = (np.real((arr["DS"][:,:,XX]-arr["DS"][:,:,YY])) + np.real((arr2["DS"][:,:,XX]-arr2["DS"][:,:,YY]))) / 2
-Ut = (np.real((arr["DS"][:,:,XY]+arr["DS"][:,:,YX])) + np.real((arr2["DS"][:,:,XY]+arr2["DS"][:,:,YX]))) / 2
-Vt = (np.imag((arr["DS"][:,:,XY]-arr["DS"][:,:,YX])) + np.imag((arr2["DS"][:,:,XY]-arr2["DS"][:,:,YX]))) / 2
+mkt = np.load("dynspec/1652551867-sdp-l0_2026-05-22T14-51-05_zBI.pkl", allow_pickle=True)
+
+freqs_m = mkt["FREQS"]/1.e9
+times_m = mkt["TIMES"]
+times_mz = mkt["TIMES"] - mkt["TIMES"][0]
+
+# ASKAP data correct transforms
+polaxis = -45.0
+theta = 2.0 * np.radians(polaxis)
+It1 = np.real((arr1["DS"][:,:,YY]+arr1["DS"][:,:,XX]))
+It2 = np.real((arr2["DS"][:,:,YY]+arr2["DS"][:,:,XX]))
+Qt1 = np.real(np.cos(theta)*(arr1["DS"][:,:,YX]+arr1["DS"][:,:,XY]) - np.sin(theta)*(arr1["DS"][:,:,YY]-arr1["DS"][:,:,XX]))
+Qt2 = np.real(np.cos(theta)*(arr2["DS"][:,:,YX]+arr2["DS"][:,:,XY]) - np.sin(theta)*(arr2["DS"][:,:,YY]-arr2["DS"][:,:,XX]))
+Ut1 = np.real(np.sin(theta)*(arr1["DS"][:,:,YX]+arr1["DS"][:,:,XY]) + np.cos(theta)*(arr1["DS"][:,:,YY]-arr1["DS"][:,:,XX]))
+Ut2 = np.real(np.sin(theta)*(arr2["DS"][:,:,YX]+arr2["DS"][:,:,XY]) + np.cos(theta)*(arr2["DS"][:,:,YY]-arr2["DS"][:,:,XX]))
+#Vt2 = np.real(-1j * (arr["DS"][:,:,XY]-arr["DS"][:,:,YX]))
+Vt1 = np.imag((arr1["DS"][:,:,YX]-arr1["DS"][:,:,XY]))
+Vt2 = np.imag((arr2["DS"][:,:,YX]-arr2["DS"][:,:,XY]))
+
+# ASKAP improper transforms
+#It = np.real((arr["DS"][:,:,XX]+arr["DS"][:,:,YY]))/2
+#Qt = np.real((arr["DS"][:,:,XX]-arr["DS"][:,:,YY]))/2
+#Ut = np.real((arr["DS"][:,:,XY]+arr["DS"][:,:,YX]))/2
+#Vt = np.imag((arr["DS"][:,:,XY]-arr["DS"][:,:,YX]))/2
 
 # RFI flagging
-It[:,124] = np.nan
-Qt[:,124] = np.nan
-Ut[:,124] = np.nan
-Vt[:,124] = np.nan
+It1[:,124] = np.nan
+Qt1[:,124] = np.nan
+Ut1[:,124] = np.nan
+Vt1[:,124] = np.nan
+It2[:,124] = np.nan
+Qt2[:,124] = np.nan
+Ut2[:,124] = np.nan
+Vt2[:,124] = np.nan
 
-It[:,0:16] = np.nan
-Qt[:,0:16] = np.nan
-Ut[:,0:16] = np.nan
-Vt[:,0:16] = np.nan
+It1[:,0:16] = np.nan
+Qt1[:,0:16] = np.nan
+Ut1[:,0:16] = np.nan
+Vt1[:,0:16] = np.nan
+It2[:,0:16] = np.nan
+Qt2[:,0:16] = np.nan
+Ut2[:,0:16] = np.nan
+Vt2[:,0:16] = np.nan
 
-# Form individual Stokes dynamic spectra
-fig = plt.figure(figsize=(13,5))
-ax = fig.add_subplot(111)
-ax.imshow(It.T, origin='lower',vmin = -0.005, vmax=0.03, aspect='auto', extent=[0, (arr["TIMES"][-1]-arr["TIMES"][0]), arr["FREQS"][0]/1.e9, arr["FREQS"][-1]/1.e9] )
-ax.set_xlabel("time / s")
-ax.set_ylabel("frequency / GHz")
-fig.savefig("scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam15_StokesI_dynspec.png", bbox_inches="tight")
+It = (It1 + It2) / 2
+Qt = (Qt1 + Qt2) / 2
+Ut = (Ut1 + Ut2) / 2
+Vt = (Vt1 + Vt2) / 2
 
-fig = plt.figure(figsize=(13,5))
-ax = fig.add_subplot(111)
-ax.imshow(Qt.T, origin='lower',vmin = -0.005, vmax=0.03, aspect='auto', extent=[0, (arr["TIMES"][-1]-arr["TIMES"][0]), arr["FREQS"][0]/1.e9, arr["FREQS"][-1]/1.e9] )
-ax.set_xlabel("time / s")
-ax.set_ylabel("frequency / GHz")
-fig.savefig("scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam15_StokesQ_dynspec.png", bbox_inches="tight")
+# Form individual Stokes dynamic spectra -- of each beam, so we can check they agree, and then the combined data
+vmin, vmax = -0.005, 0.03
+make_dynspec(It.T, vmin, vmax, cmap["I"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_StokesI_dynspec.png")
+make_dynspec(It1.T, vmin, vmax, cmap["I"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesI_dynspec.png")
+make_dynspec(It2.T, vmin, vmax, cmap["I"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesI_dynspec.png")
 
-fig = plt.figure(figsize=(13,5))
-ax = fig.add_subplot(111)
-ax.imshow(Ut.T, origin='lower',vmin = -0.005, vmax=0.03, aspect='auto', extent=[0, (arr["TIMES"][-1]-arr["TIMES"][0]), arr["FREQS"][0]/1.e9, arr["FREQS"][-1]/1.e9] )
-ax.set_xlabel("time / s")
-ax.set_ylabel("frequency / GHz")
-fig.savefig("scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam15_StokesU_dynspec.png", bbox_inches="tight")
+vmin, vmax = -0.02, 0.02
+make_dynspec(Qt.T, vmin, vmax, cmap["Q"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_StokesQ_dynspec.png")
+make_dynspec(Qt1.T, vmin, vmax, cmap["Q"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesQ_dynspec.png")
+make_dynspec(Qt2.T, vmin, vmax, cmap["Q"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09StokesQ_dynspec.png")
 
-fig = plt.figure(figsize=(13,5))
-ax = fig.add_subplot(111)
-ax.imshow(Vt.T, origin='lower',vmin = -0.005, vmax=0.03, aspect='auto', extent=[0, (arr["TIMES"][-1]-arr["TIMES"][0]), arr["FREQS"][0]/1.e9, arr["FREQS"][-1]/1.e9] )
-ax.set_xlabel("time / s")
-ax.set_ylabel("frequency / GHz")
-fig.savefig("scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam15_StokesV_dynspec.png", bbox_inches="tight")
+make_dynspec(Ut.T, vmin, vmax, cmap["U"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_StokesU_dynspec.png")
+make_dynspec(Ut1.T, vmin, vmax, cmap["U"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesU_dynspec.png")
+make_dynspec(Ut2.T, vmin, vmax, cmap["U"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesU_dynspec.png")
+
+make_dynspec(Vt.T, vmin, vmax, cmap["V"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_StokesV_dynspec.png")
+make_dynspec(Vt1.T, vmin, vmax, cmap["V"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesV_dynspec.png")
+make_dynspec(Vt2.T, vmin, vmax, cmap["V"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesV_dynspec.png")
+
 
 # Form light curves
-lc = np.nanmean(It, axis=1)
-qlc = np.nanmean(Vt, axis=1)
-ulc = np.nanmean(Ut, axis=1)
-vlc = np.nanmean(Qt, axis=1)
+# No swapping now I've fixed the conventions
+ilc_a = np.nanmean(It, axis=1)
+qlc_a = np.nanmean(Qt, axis=1)
+ulc_a = np.nanmean(Ut, axis=1)
+vlc_a = np.nanmean(Vt, axis=1)
+ilc1_a = np.nanmean(It1, axis=1)
+qlc1_a = np.nanmean(Qt1, axis=1)
+ulc1_a = np.nanmean(Ut1, axis=1)
+vlc1_a = np.nanmean(Vt1, axis=1)
+ilc2_a = np.nanmean(It2, axis=1)
+qlc2_a = np.nanmean(Qt2, axis=1)
+ulc2_a = np.nanmean(Ut2, axis=1)
+vlc2_a = np.nanmean(Vt2, axis=1)
+#vlc_a2 = np.nanmean(Vt2, axis=1)
+#vlc_a2 = np.nanmean(Vt2, axis=1)
+#vlc_a2 = np.nanmean(Vt2, axis=1)
 
-fig = plt.figure(figsize=(13,5))
+vmin, vmax =  -5, 15
+make_lightcurve(times_az, 1000*ilc_a, vmin, vmax, 0.5, lc["I"], 1.0, 'Stokes I', 'EMU_StokesI_light_curve.png', offset=times_a[0])
+make_lightcurve(times_az, 1000*ilc1_a, vmin, vmax, 0.5, lc["I"], 1.0, 'Stokes I', 'EMU_beam15_StokesI_light_curve.png', offset=times_a[0])
+make_lightcurve(times_az, 1000*ilc2_a, vmin, vmax, 0.5, lc["I"], 1.0, 'Stokes I', 'EMU_beam09_StokesI_light_curve.png', offset=times_a[0])
+
+vmin, vmax =  -15, 15
+make_lightcurve(times_az, 1000*qlc_a, vmin, vmax, 0.5, lc["Q"], 1.0, 'Stokes Q', 'EMU_StokesQ_light_curve.png', offset=times_a[0])
+make_lightcurve(times_az, 1000*qlc1_a, vmin, vmax, 0.5, lc["Q"], 1.0, 'Stokes Q', 'EMU_beam15_StokesQ_light_curve.png', offset=times_a[0])
+make_lightcurve(times_az, 1000*qlc2_a, vmin, vmax, 0.5, lc["Q"], 1.0, 'Stokes Q', 'EMU_beam09_StokesQ_light_curve.png', offset=times_a[0])
+
+vmin, vmax =  -15, 15
+make_lightcurve(times_az, 1000*ulc_a, vmin, vmax, 0.5, lc["U"], 1.0, 'Stokes U', 'EMU_StokesU_light_curve.png', offset=times_a[0])
+make_lightcurve(times_az, 1000*ulc1_a, vmin, vmax, 0.5, lc["U"], 1.0, 'Stokes U', 'EMU_beam15_StokesU_light_curve.png', offset=times_a[0])
+make_lightcurve(times_az, 1000*ulc2_a, vmin, vmax, 0.5, lc["U"], 1.0, 'Stokes U', 'EMU_beam09_StokesU_light_curve.png', offset=times_a[0])
+
+vmin, vmax =  -15, 15
+make_lightcurve(times_az, 1000*vlc_a, vmin, vmax, 0.5, lc["V"], 1.0, 'Stokes V', 'EMU_StokesV_light_curve.png', offset=times_a[0])
+make_lightcurve(times_az, 1000*vlc1_a, vmin, vmax, 0.5, lc["V"], 1.0, 'Stokes V', 'EMU_beam15_StokesV_light_curve.png', offset=times_a[0])
+make_lightcurve(times_az, 1000*vlc2_a, vmin, vmax, 0.5, lc["V"], 1.0, 'Stokes V', 'EMU_beam09_StokesV_light_curve.png', offset=times_a[0])
+
+# MeerKAT data - basic transforms
+#It_m = np.real((mkt["DS"][:,:,XX]+mkt["DS"][:,:,YY]))/2
+#Qt_m = np.real((mkt["DS"][:,:,XX]-mkt["DS"][:,:,YY]))/2
+#Ut_m = np.real((mkt["DS"][:,:,XY]+mkt["DS"][:,:,YX]))/2
+#Vt_m = np.imag((mkt["DS"][:,:,XY]-mkt["DS"][:,:,YX]))/2
+
+# MeerKAT data - Alec's suggestion (effectively this swaps Q and U)
+It_m = np.real((mkt["DS"][:,:,XX]+mkt["DS"][:,:,YY]))/2
+Qt_m = np.real((-mkt["DS"][:,:,XY]-mkt["DS"][:,:,YX]))/2
+Ut_m = np.real((mkt["DS"][:,:,XX]-mkt["DS"][:,:,YY]))/2
+Vt_m = np.real((-1j*mkt["DS"][:,:,XY]+1j*mkt["DS"][:,:,YX]))/2
+
+# Form individual Stokes dynamic spectra
+vmin, vmax = -0.005, 0.03
+make_dynspec(It_m.T, vmin, vmax, cmap["I"], [0, times_mz[-1], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesI_dynspec.png")
+
+vmin, vmax = -0.005, 0.005
+make_dynspec(Qt_m.T, vmin, vmax, cmap["Q"], [0, times_mz[-1], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesQ_dynspec.png")
+make_dynspec(Ut_m.T, vmin, vmax, cmap["U"], [0, times_mz[-1], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesU_dynspec.png")
+make_dynspec(Vt_m.T, vmin, vmax, cmap["V"], [0, times_mz[-1], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesV_dynspec.png")
+
+# Zoom in on that really interesting bit
+indstart = 460
+indend = 505
+i = 22
+vmin, vmax = -0.005, 0.005
+make_dynspec(Qt_m[indstart:indend].T, vmin, vmax, cmap["Q"], [times_mz[indstart], times_mz[indend], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesQ_dynspec_zoom.png", imwidth=5)
+make_dynspec(Ut_m[indstart:indend].T, vmin, vmax, cmap["U"], [times_mz[indstart], times_mz[indend], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesU_dynspec_zoom.png", imwidth=5)
+make_dynspec(Vt_m[indstart:indend].T, vmin, vmax, cmap["V"], [times_mz[indstart], times_mz[indend], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesV_dynspec_zoom.png", imwidth=5)
+
+# Form light curves
+ilc_m = np.nanmean(It_m, axis=1)
+qlc_m = np.nanmean(Qt_m, axis=1)
+ulc_m = np.nanmean(Ut_m, axis=1)
+vlc_m = np.nanmean(Vt_m, axis=1)
+
+# Plot light curves
+vmin, vmax = -3, 20
+make_lightcurve(times_mz, 1000*ilc_m, vmin, vmax, 0.5, lc["I"], 1.0, 'Stokes I', 'MeerKAT_StokesI_light_curve.png', offset=times_m[0])
+vmin, vmax = -20, 20
+make_lightcurve(times_mz, 1000*qlc_m, vmin, vmax, 0.5, lc["Q"], 1.0, 'Stokes Q', 'MeerKAT_StokesQ_light_curve.png', offset=times_m[0])
+make_lightcurve(times_mz, 1000*ulc_m, vmin, vmax, 0.5, lc["U"], 1.0, 'Stokes U', 'MeerKAT_StokesU_light_curve.png', offset=times_m[0])
+make_lightcurve(times_mz, 1000*vlc_m, vmin, vmax, 0.5, lc["V"], 1.0, 'Stokes V', 'MeerKAT_StokesV_light_curve.png', offset=times_m[0])
+make_lightcurve([times_mz, times_mz, times_mz],
+                [1000*qlc_m, 1000*ulc_m, 1000*vlc_m],
+                vmin, vmax,
+                [0.5, 0.5, 0.5],
+                [lc["Q"], lc["U"], lc["V"]],
+                [1.0, 1.0, 1.0],
+                ['Stokes Q', 'Stokes U', 'Stokes V'],
+                'MeerKAT_StokesQUV_light_curve.png', offset=times_m[0])
+
+# find the common time range
+
+tstart = np.nanmin([arr1["TIMES"][0], mkt["TIMES"][0]])
+tend = np.nanmax([arr1["TIMES"][-1], mkt["TIMES"][-1]])
+
+# Zoom in on the interesting section, make joint plots
+tstart, tend = 5159271500.0, 5159272500.0
+
+fig = plt.figure(figsize=(5,5))
 ax = fig.add_subplot(111)
 ax.set_ylabel("brightness (mJy/beam)")
 ax.set_xlabel("time / s")
-ax.plot(arr["TIMES"] - arr["TIMES"][0], 1000*lc, lw=0.5, color='black', alpha=0.8, label="Stokes I")
-for i in range(-3, 20):
-    ax.axvline(ephem(i)*24*3600 - arr["TIMES"][0], alpha=0.4, color='orange')
-ax.set_xlim(0, arr["TIMES"][-1] - arr["TIMES"][0])
+ax.plot(times_a, 1000*ilc_a, lw=2, color='darkgrey', alpha=0.5, label="ASKAP Stokes I")
+ax.plot(times_m, 1000*ilc_m, lw=0.5, color='black', alpha=0.8, label="MeerKAT Stokes I")
+for i in range(-3, 30):
+    ax.axvline(ephem(i)*24*3600, alpha=0.4, color='orange')
+ax.set_xlim(tstart, tend)
+ax.set_ylim(-10, 30)
 ax.legend(loc=1)
-fig.savefig("scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam15_lightcurve.png", bbox_inches="tight")
+fig.savefig("Joint_StokesI_lightcurve.png", bbox_inches="tight")
 
-fig = plt.figure(figsize=(13,5))
+fig = plt.figure(figsize=(5,5))
 ax = fig.add_subplot(111)
 ax.set_ylabel("brightness (mJy/beam)")
 ax.set_xlabel("time / s")
-ax.plot(arr["TIMES"] - arr["TIMES"][0], 1000*qlc, lw=0.5, color='red', alpha=0.8, label="Stokes Q") 
-ax.plot(arr["TIMES"] - arr["TIMES"][0], 1000*ulc, lw=0.5, color='blue', alpha=0.8, label="Stokes U")
-for i in range(-3, 20):
-    ax.axvline(ephem(i)*24*3600 - arr["TIMES"][0], alpha=0.4, color='orange')
-ax.set_xlim(0, arr["TIMES"][-1] - arr["TIMES"][0])
+ax.plot(times_a, 1000*qlc_a, lw=2, color='red', alpha=0.5, label="ASKAP Stokes Q") 
+ax.plot(times_m, 1000*qlc_m, lw=0.5, color='darkred', alpha=0.8, label="MeerKAT Stokes Q") 
+ax.plot(times_a, 1000*ulc_a, lw=2, color='blue', alpha=0.5, label="ASKAP Stokes U")
+ax.plot(times_m, 1000*ulc_m, lw=0.5, color='darkblue', alpha=0.8, label="MeerKAT Stokes U")
+ax.plot(times_a, 1000*vlc_a, lw=2, color='green', alpha=0.5, label="ASKAP Stokes V")
+ax.plot(times_m, 1000*vlc_m, lw=0.5, color='darkgreen', alpha=0.8, label="MeerKAT Stokes V")
+for i in range(-3, 30):
+    ax.axvline(ephem(i)*24*3600, alpha=0.4, color='orange')
+ax.set_xlim(tstart, tend)
 ax.legend(loc=1)
-fig.savefig("scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam15_QU_lightcurve.png", bbox_inches="tight")
-
-fig = plt.figure(figsize=(13,5))
-ax = fig.add_subplot(111)
-ax.set_ylabel("brightness (mJy/beam)")
-ax.set_xlabel("time / s")
-ax.plot(arr["TIMES"] - arr["TIMES"][0], 1000*vlc, lw=0.5, color='green', alpha=0.8, label="Stokes V")
-for i in range(-3, 20):
-    ax.axvline(ephem(i)*24*3600 - arr["TIMES"][0], alpha=0.4, color='orange')
-ax.set_xlim(0, arr["TIMES"][-1] - arr["TIMES"][0])
-ax.set_ylim(-20, 20)
-ax.legend(loc=1)
-fig.savefig("scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam15_V_lightcurve.png", bbox_inches="tight")
+fig.savefig("Joint_StokesQUV_lightcurve.png", bbox_inches="tight")
 
 # Fold the data
 # Put these into MJD (instead of MJD seconds)
-trange = arr["TIMES"] / (24*3600)
+trange = times_a / (24*3600)
 
 phase = np.mod(trange, 2*P)/(2*P)
 idx = np.argsort(phase)
@@ -130,14 +273,10 @@ bin_edges = np.linspace(0, 1, num_bins + 1)
 bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
 bin_indices = np.digitize(phase[idx], bin_edges) - 1
 
-# Add 'phase' and 'bin_idx' to DataFrame
-#df['phase'] = phase
-#df['bin_idx'] = bin_indices
-
-I_sums = np.bincount(bin_indices, weights=1000*lc[idx], minlength=num_bins)
-Q_sums = np.bincount(bin_indices, weights=1000*qlc[idx], minlength=num_bins)
-U_sums = np.bincount(bin_indices, weights=1000*ulc[idx], minlength=num_bins)
-V_sums = np.bincount(bin_indices, weights=1000*vlc[idx], minlength=num_bins)
+I_sums = np.bincount(bin_indices, weights=1000*ilc_a[idx], minlength=num_bins)
+Q_sums = np.bincount(bin_indices, weights=1000*qlc_a[idx], minlength=num_bins)
+U_sums = np.bincount(bin_indices, weights=1000*ulc_a[idx], minlength=num_bins)
+V_sums = np.bincount(bin_indices, weights=1000*vlc_a[idx], minlength=num_bins)
 
 counts = np.bincount(bin_indices, minlength=num_bins)
 
@@ -149,33 +288,33 @@ V_binned_average = V_sums / np.where(counts == 0, 1, counts)
 
 fig = plt.figure(figsize=(8,5))
 ax = fig.add_subplot(111)
-ax.plot(bin_centers, I_binned_average, color='black', alpha=0.8, lw=0.5, label="Stokes I")
-ax.plot(bin_centers, Q_binned_average, color='red', alpha=0.8, lw=0.5, label="Stokes Q")
-ax.plot(bin_centers, U_binned_average, color='blue', alpha=0.8, lw=0.5, label="Stokes U")
-ax.plot(bin_centers, V_binned_average, color='green', alpha=0.8, lw=0.5, label="Stokes V")
+ax.plot(bin_centers, I_binned_average, color=lc['I'], alpha=0.8, lw=0.5, label="Stokes I")
+ax.plot(bin_centers, Q_binned_average, color=lc['Q'], alpha=0.8, lw=0.5, label="Stokes Q")
+ax.plot(bin_centers, U_binned_average, color=lc['U'], alpha=0.8, lw=0.5, label="Stokes U")
+ax.plot(bin_centers, V_binned_average, color=lc['V'], alpha=0.8, lw=0.5, label="Stokes V")
 ax.set_xlabel("Phase")
 ax.set_ylabel("Mean brightness (mJy)")
 ax.legend(loc=1)
-fig.savefig("Folded_light_curve.png", bbox_inches="tight")
+fig.savefig("Folded_EMU_light_curve.png", bbox_inches="tight")
 
-# Load the rest of the .pkl files and calculate RMS and time for non-detections plot
-
-pkls = sorted(glob.glob("dynspec/*RACS*pkl") + glob.glob("dynspec/*VAST*pkl") + glob.glob("dynspec/*SB43773*pkl") + glob.glob("dynspec/*SB33284*pkl"))
-
-mjds = []
-rmss = []
-for pkl in pkls:
-    arr = np.load(pkl, allow_pickle=True)
-    mjds.append(arr["TIMES"][int(len(arr["TIMES"])/2)]/(24*3600))
-    rmss.append(np.nanstd(np.nanmean(np.real((arr["DS"][:,:,XX]+arr["DS"][:,:,YY])),axis=1)))
-
-fig = plt.figure(figsize=(8,5))
-ax = fig.add_subplot(111)
-ax.scatter(mjds, 1000*np.array(rmss), marker='v', color='black', label='1-sigma RMS\n(10s time resolution)')
-ax.set_xlabel("MJD")
-ax.set_ylabel("Flux density (mJy)")
-ax.scatter(T0, 17., color='red', marker='*', label='EMU Pilot detection\n(brightest pulse)')
-ax.errorbar(T0, 17., yerr=1, color='red')
-ax.legend(loc=1)
-fig.savefig("Non-detections_ASKAP.png", bbox_inches="tight")
+## Load the rest of the .pkl files and calculate RMS and time for non-detections plot
+#
+#pkls = sorted(glob.glob("dynspec/*RACS*pkl") + glob.glob("dynspec/*VAST*pkl") + glob.glob("dynspec/*SB43773*pkl") + glob.glob("dynspec/*SB33284*pkl"))
+#
+#mjds = []
+#rmss = []
+#for pkl in pkls:
+#    arr = np.load(pkl, allow_pickle=True)
+#    mjds.append(arr["TIMES"][int(len(arr["TIMES"])/2)]/(24*3600))
+#    rmss.append(np.nanstd(np.nanmean(np.real((arr["DS"][:,:,XX]+arr["DS"][:,:,YY])),axis=1)))
+#
+#fig = plt.figure(figsize=(8,5))
+#ax = fig.add_subplot(111)
+#ax.scatter(mjds, 1000*np.array(rmss), marker='v', color='black', label='1-sigma RMS\n(10s time resolution)')
+#ax.set_xlabel("MJD")
+#ax.set_ylabel("Flux density (mJy)")
+#ax.scatter(T0, 17., color='red', marker='*', label='EMU Pilot detection\n(brightest pulse)')
+#ax.errorbar(T0, 17., yerr=1, color='red')
+#ax.legend(loc=1)
+#fig.savefig("Non-detections_ASKAP.png", bbox_inches="tight")
 
