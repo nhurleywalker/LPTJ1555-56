@@ -6,6 +6,12 @@ from astropy.time import Time
 import glob
 import sys
 
+makeDynspec = False
+makeLightcurves = False
+makeFold = True
+makeUpperlimits = False
+debugPoly = False
+
 T0 = 59713.512505
 P = 0.02168 # days
 
@@ -24,8 +30,8 @@ def make_dynspec(data, vmin, vmax, cmap, extent, outname, imwidth=13):
     fig.savefig(outname, bbox_inches="tight")
     plt.close()
 
-def make_lightcurve(times, lc, vmin, vmax, lw, color, alpha, label, outname, offset=0.0):
-    fig = plt.figure(figsize=(13,5))
+def make_lightcurve(times, lc, vmin, vmax, lw, color, alpha, label, outname, offset=0.0, imwidth=13):
+    fig = plt.figure(figsize=(imwidth,5))
     ax = fig.add_subplot(111)
     ax.set_ylabel("brightness (mJy/beam)")
     ax.set_xlabel("time / s")
@@ -52,13 +58,15 @@ cmap = { "I" : "viridis",
          "U" : "RdBu",
          "V" : "PRGn" }
 
-lc = { "I" : "black",
+color = { "I" : "black",
          "Q" : "red",
          "U" : "blue",
          "V" : "green" }
 # TODO find positions in primary beams and take weighted average, correct for beam attenuation
 arr1 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam15_averaged_cal.leakage.pkl", allow_pickle=True)
 arr2 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam09_averaged_cal.leakage.pkl", allow_pickle=True)
+# This version has been run through a different set of software to try to get saner polarisation results
+arr3 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam09_averaged_cal.leakage.pkl", allow_pickle=True)
 
 freqs_a = arr1["FREQS"]/1.e9
 times_a = arr1["TIMES"]
@@ -70,7 +78,7 @@ freqs_m = mkt["FREQS"]/1.e9
 times_m = mkt["TIMES"]
 times_mz = mkt["TIMES"] - mkt["TIMES"][0]
 
-# ASKAP data correct transforms
+# ASKAP data correct transforms -- if data has not been modified by FixMS
 polaxis = -45.0
 theta = 2.0 * np.radians(polaxis)
 It1 = np.real((arr1["DS"][:,:,YY]+arr1["DS"][:,:,XX]))
@@ -83,11 +91,11 @@ Ut2 = np.real(np.sin(theta)*(arr2["DS"][:,:,YX]+arr2["DS"][:,:,XY]) + np.cos(the
 Vt1 = np.imag((arr1["DS"][:,:,YX]-arr1["DS"][:,:,XY]))
 Vt2 = np.imag((arr2["DS"][:,:,YX]-arr2["DS"][:,:,XY]))
 
-# ASKAP improper transforms
-#It = np.real((arr["DS"][:,:,XX]+arr["DS"][:,:,YY]))/2
-#Qt = np.real((arr["DS"][:,:,XX]-arr["DS"][:,:,YY]))/2
-#Ut = np.real((arr["DS"][:,:,XY]+arr["DS"][:,:,YX]))/2
-#Vt = np.imag((arr["DS"][:,:,XY]-arr["DS"][:,:,YX]))/2
+# ASKAP transforms *after* running through FixMS, using Alec's conventions (which he says are the same as WScClean)
+It3 = np.real((arr3["DS"][:,:,XX]+arr3["DS"][:,:,YY]))
+Qt3 = np.real((arr3["DS"][:,:,XX]-arr3["DS"][:,:,YY]))
+Ut3 = np.real((arr3["DS"][:,:,XY]+arr3["DS"][:,:,YX]))
+Vt3 = np.real((-1j*arr3["DS"][:,:,XY]+1j*arr3["DS"][:,:,YX]))
 
 # RFI flagging
 It1[:,124] = np.nan
@@ -98,6 +106,10 @@ It2[:,124] = np.nan
 Qt2[:,124] = np.nan
 Ut2[:,124] = np.nan
 Vt2[:,124] = np.nan
+It3[:,124] = np.nan
+Qt3[:,124] = np.nan
+Ut3[:,124] = np.nan
+Vt3[:,124] = np.nan
 
 It1[:,0:16] = np.nan
 Qt1[:,0:16] = np.nan
@@ -107,6 +119,10 @@ It2[:,0:16] = np.nan
 Qt2[:,0:16] = np.nan
 Ut2[:,0:16] = np.nan
 Vt2[:,0:16] = np.nan
+It3[:,0:16] = np.nan
+Qt3[:,0:16] = np.nan
+Ut3[:,0:16] = np.nan
+Vt3[:,0:16] = np.nan
 
 It = (It1 + It2) / 2
 Qt = (Qt1 + Qt2) / 2
@@ -114,62 +130,73 @@ Ut = (Ut1 + Ut2) / 2
 Vt = (Vt1 + Vt2) / 2
 
 # Form individual Stokes dynamic spectra -- of each beam, so we can check they agree, and then the combined data
-vmin, vmax = -0.005, 0.03
-make_dynspec(It.T, vmin, vmax, cmap["I"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_StokesI_dynspec.png")
-make_dynspec(It1.T, vmin, vmax, cmap["I"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesI_dynspec.png")
-make_dynspec(It2.T, vmin, vmax, cmap["I"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesI_dynspec.png")
+if makeDynspec is True:
+    vmin, vmax = -0.005, 0.03
+    make_dynspec(It.T, vmin, vmax, cmap["I"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_StokesI_dynspec.png")
+    make_dynspec(It1.T, vmin, vmax, cmap["I"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesI_dynspec.png")
+    make_dynspec(It2.T, vmin, vmax, cmap["I"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesI_dynspec.png")
+    make_dynspec(It3.T, vmin, vmax, cmap["I"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesI_fixms_dynspec.png")
 
-vmin, vmax = -0.02, 0.02
-make_dynspec(Qt.T, vmin, vmax, cmap["Q"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_StokesQ_dynspec.png")
-make_dynspec(Qt1.T, vmin, vmax, cmap["Q"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesQ_dynspec.png")
-make_dynspec(Qt2.T, vmin, vmax, cmap["Q"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09StokesQ_dynspec.png")
+    vmin, vmax = -0.02, 0.02
+    make_dynspec(Qt.T, vmin, vmax, cmap["Q"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_StokesQ_dynspec.png")
+    make_dynspec(Qt1.T, vmin, vmax, cmap["Q"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesQ_dynspec.png")
+    make_dynspec(Qt2.T, vmin, vmax, cmap["Q"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesQ_dynspec.png")
+    make_dynspec(Qt3.T, vmin, vmax, cmap["Q"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesQ_fixms_dynspec.png")
 
-make_dynspec(Ut.T, vmin, vmax, cmap["U"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_StokesU_dynspec.png")
-make_dynspec(Ut1.T, vmin, vmax, cmap["U"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesU_dynspec.png")
-make_dynspec(Ut2.T, vmin, vmax, cmap["U"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesU_dynspec.png")
+    make_dynspec(Ut.T, vmin, vmax, cmap["U"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_StokesU_dynspec.png")
+    make_dynspec(Ut1.T, vmin, vmax, cmap["U"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesU_dynspec.png")
+    make_dynspec(Ut2.T, vmin, vmax, cmap["U"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesU_dynspec.png")
+    make_dynspec(Ut3.T, vmin, vmax, cmap["U"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesU_fixms_dynspec.png")
 
-make_dynspec(Vt.T, vmin, vmax, cmap["V"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_StokesV_dynspec.png")
-make_dynspec(Vt1.T, vmin, vmax, cmap["V"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesV_dynspec.png")
-make_dynspec(Vt2.T, vmin, vmax, cmap["V"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesV_dynspec.png")
+    make_dynspec(Vt.T, vmin, vmax, cmap["V"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_StokesV_dynspec.png")
+    make_dynspec(Vt1.T, vmin, vmax, cmap["V"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesV_dynspec.png")
+    make_dynspec(Vt2.T, vmin, vmax, cmap["V"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesV_dynspec.png")
+    make_dynspec(Vt3.T, vmin, vmax, cmap["V"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesV_fixms_dynspec.png")
 
 
 # Form light curves
-# No swapping now I've fixed the conventions
 ilc_a = np.nanmean(It, axis=1)
 qlc_a = np.nanmean(Qt, axis=1)
 ulc_a = np.nanmean(Ut, axis=1)
 vlc_a = np.nanmean(Vt, axis=1)
+
 ilc1_a = np.nanmean(It1, axis=1)
 qlc1_a = np.nanmean(Qt1, axis=1)
 ulc1_a = np.nanmean(Ut1, axis=1)
 vlc1_a = np.nanmean(Vt1, axis=1)
+
 ilc2_a = np.nanmean(It2, axis=1)
 qlc2_a = np.nanmean(Qt2, axis=1)
 ulc2_a = np.nanmean(Ut2, axis=1)
 vlc2_a = np.nanmean(Vt2, axis=1)
-#vlc_a2 = np.nanmean(Vt2, axis=1)
-#vlc_a2 = np.nanmean(Vt2, axis=1)
-#vlc_a2 = np.nanmean(Vt2, axis=1)
 
-vmin, vmax =  -5, 15
-make_lightcurve(times_az, 1000*ilc_a, vmin, vmax, 0.5, lc["I"], 1.0, 'Stokes I', 'EMU_StokesI_light_curve.png', offset=times_a[0])
-make_lightcurve(times_az, 1000*ilc1_a, vmin, vmax, 0.5, lc["I"], 1.0, 'Stokes I', 'EMU_beam15_StokesI_light_curve.png', offset=times_a[0])
-make_lightcurve(times_az, 1000*ilc2_a, vmin, vmax, 0.5, lc["I"], 1.0, 'Stokes I', 'EMU_beam09_StokesI_light_curve.png', offset=times_a[0])
+ilc3_a = np.nanmean(It3, axis=1)
+qlc3_a = np.nanmean(Qt3, axis=1)
+ulc3_a = np.nanmean(Ut3, axis=1)
+vlc3_a = np.nanmean(Vt3, axis=1)
 
-vmin, vmax =  -15, 15
-make_lightcurve(times_az, 1000*qlc_a, vmin, vmax, 0.5, lc["Q"], 1.0, 'Stokes Q', 'EMU_StokesQ_light_curve.png', offset=times_a[0])
-make_lightcurve(times_az, 1000*qlc1_a, vmin, vmax, 0.5, lc["Q"], 1.0, 'Stokes Q', 'EMU_beam15_StokesQ_light_curve.png', offset=times_a[0])
-make_lightcurve(times_az, 1000*qlc2_a, vmin, vmax, 0.5, lc["Q"], 1.0, 'Stokes Q', 'EMU_beam09_StokesQ_light_curve.png', offset=times_a[0])
+if makeLightcurves is True:
+    vmin, vmax =  -5, 15
+    make_lightcurve(times_az, 1000*ilc_a, vmin, vmax, 0.5, color["I"], 1.0, 'Stokes I', 'EMU_StokesI_light_curve.png', offset=times_a[0])
+    make_lightcurve(times_az, 1000*ilc1_a, vmin, vmax, 0.5, color["I"], 1.0, 'Stokes I', 'EMU_beam15_StokesI_light_curve.png', offset=times_a[0])
+    make_lightcurve(times_az, 1000*ilc2_a, vmin, vmax, 0.5, color["I"], 1.0, 'Stokes I', 'EMU_beam09_StokesI_light_curve.png', offset=times_a[0])
+    make_lightcurve(times_az, 1000*ilc3_a, vmin, vmax, 0.5, color["I"], 1.0, 'Stokes I', 'EMU_beam09_StokesI_fixms_light_curve.png', offset=times_a[0])
 
-vmin, vmax =  -15, 15
-make_lightcurve(times_az, 1000*ulc_a, vmin, vmax, 0.5, lc["U"], 1.0, 'Stokes U', 'EMU_StokesU_light_curve.png', offset=times_a[0])
-make_lightcurve(times_az, 1000*ulc1_a, vmin, vmax, 0.5, lc["U"], 1.0, 'Stokes U', 'EMU_beam15_StokesU_light_curve.png', offset=times_a[0])
-make_lightcurve(times_az, 1000*ulc2_a, vmin, vmax, 0.5, lc["U"], 1.0, 'Stokes U', 'EMU_beam09_StokesU_light_curve.png', offset=times_a[0])
+    vmin, vmax =  -15, 15
+    make_lightcurve(times_az, 1000*qlc_a, vmin, vmax, 0.5, color["Q"], 1.0, 'Stokes Q', 'EMU_StokesQ_light_curve.png', offset=times_a[0])
+    make_lightcurve(times_az, 1000*qlc1_a, vmin, vmax, 0.5, color["Q"], 1.0, 'Stokes Q', 'EMU_beam15_StokesQ_light_curve.png', offset=times_a[0])
+    make_lightcurve(times_az, 1000*qlc2_a, vmin, vmax, 0.5, color["Q"], 1.0, 'Stokes Q', 'EMU_beam09_StokesQ_light_curve.png', offset=times_a[0])
+    make_lightcurve(times_az, 1000*qlc3_a, vmin, vmax, 0.5, color["Q"], 1.0, 'Stokes Q', 'EMU_beam09_StokesQ_fixms_light_curve.png', offset=times_a[0])
 
-vmin, vmax =  -15, 15
-make_lightcurve(times_az, 1000*vlc_a, vmin, vmax, 0.5, lc["V"], 1.0, 'Stokes V', 'EMU_StokesV_light_curve.png', offset=times_a[0])
-make_lightcurve(times_az, 1000*vlc1_a, vmin, vmax, 0.5, lc["V"], 1.0, 'Stokes V', 'EMU_beam15_StokesV_light_curve.png', offset=times_a[0])
-make_lightcurve(times_az, 1000*vlc2_a, vmin, vmax, 0.5, lc["V"], 1.0, 'Stokes V', 'EMU_beam09_StokesV_light_curve.png', offset=times_a[0])
+    make_lightcurve(times_az, 1000*ulc_a, vmin, vmax, 0.5, color["U"], 1.0, 'Stokes U', 'EMU_StokesU_light_curve.png', offset=times_a[0])
+    make_lightcurve(times_az, 1000*ulc1_a, vmin, vmax, 0.5, color["U"], 1.0, 'Stokes U', 'EMU_beam15_StokesU_light_curve.png', offset=times_a[0])
+    make_lightcurve(times_az, 1000*ulc2_a, vmin, vmax, 0.5, color["U"], 1.0, 'Stokes U', 'EMU_beam09_StokesU_light_curve.png', offset=times_a[0])
+    make_lightcurve(times_az, 1000*ulc3_a, vmin, vmax, 0.5, color["U"], 1.0, 'Stokes U', 'EMU_beam09_StokesU_fixms_light_curve.png', offset=times_a[0])
+
+    make_lightcurve(times_az, 1000*vlc_a, vmin, vmax, 0.5, color["V"], 1.0, 'Stokes V', 'EMU_StokesV_light_curve.png', offset=times_a[0])
+    make_lightcurve(times_az, 1000*vlc1_a, vmin, vmax, 0.5, color["V"], 1.0, 'Stokes V', 'EMU_beam15_StokesV_light_curve.png', offset=times_a[0])
+    make_lightcurve(times_az, 1000*vlc2_a, vmin, vmax, 0.5, color["V"], 1.0, 'Stokes V', 'EMU_beam09_StokesV_light_curve.png', offset=times_a[0])
+    make_lightcurve(times_az, 1000*vlc3_a, vmin, vmax, 0.5, color["V"], 1.0, 'Stokes V', 'EMU_beam09_StokesV_fixms_light_curve.png', offset=times_a[0])
 
 # MeerKAT data - basic transforms
 #It_m = np.real((mkt["DS"][:,:,XX]+mkt["DS"][:,:,YY]))/2
@@ -207,21 +234,151 @@ qlc_m = np.nanmean(Qt_m, axis=1)
 ulc_m = np.nanmean(Ut_m, axis=1)
 vlc_m = np.nanmean(Vt_m, axis=1)
 
+# MeerKAT Stokes I has a slow ripple to it that needs fixing
+# First break the data into four segments
+tdiff = times_m[1:] - times_m[0:-1]
+tbreak = np.where(np.abs(tdiff) > 50)[0]
+#print(tbreaks)
+#(array([223, 447, 672]),)
+seg1_end = tbreak[0]+1
+seg2_end = tbreak[1]+1
+seg3_end = tbreak[2]+1
+
+# I noticed the first and last samples are bad in each scan, so we will flag those
+b = 9 # b for buffer
+
+# Segment 1
+deg = 3
+vmin, vmax = -10, 30
+
+t = times_m[:seg1_end]
+t_fit = times_m[b:seg1_end-b]
+y = ilc_m[:seg1_end]
+y_fit = ilc_m[b:seg1_end-b]
+p = np.polynomial.Polynomial.fit(t_fit, y_fit, deg=deg)
+y_smooth = p(t)
+
+if debugPoly is True:
+    make_lightcurve([t, t, t],
+                    [1000*y, 1000*y_smooth, 1000*(y - y_smooth)],
+                    vmin, vmax,
+                    [2, 0.5, 1],
+                    [color["I"], color["I"], color["I"]],
+                    [0.4, 0.8, 1.0],
+                    ['Original data', 'Fitted curve', 'Residual'],
+                    'MeerKAT_StokesI_polyfit_segment1.png',
+                    imwidth=8)
+
+ilc_m[:seg1_end] = y - y_smooth
+# And now flag the buffer
+ilc_m[0:b] = np.nan
+ilc_m[seg1_end-b:seg1_end] = np.nan
+
+# Segment 2
+deg = 3
+vmin, vmax = -30, 30
+t = times_m[seg1_end:seg2_end]
+t_fit = times_m[seg1_end+b:seg2_end-b]
+y = ilc_m[seg1_end:seg2_end]
+y_fit = ilc_m[seg1_end+b:seg2_end-b]
+p = np.polynomial.Polynomial.fit(t_fit, y_fit, deg=deg)
+y_smooth = p(t)
+
+if debugPoly is True:
+    make_lightcurve([t, t, t],
+                    [1000*y, 1000*y_smooth, 1000*(y - y_smooth)],
+                    vmin, vmax,
+                    [2, 0.5, 1],
+                    [color["I"], color["I"], color["I"]],
+                    [0.4, 0.8, 1.0],
+                    ['Original data', 'Fitted curve', 'Residual'],
+                    'MeerKAT_StokesI_polyfit_segment2.png',
+                    imwidth=8)
+
+ilc_m[seg1_end:seg2_end] = y - y_smooth
+# And now flag the buffer
+ilc_m[seg1_end:seg1_end+b] = np.nan
+ilc_m[seg2_end-b:seg2_end] = np.nan
+
+# Segment 3
+deg = 3
+vmin, vmax = -30, 25
+t = times_m[seg2_end:seg3_end]
+t_fit = times_m[seg2_end+b:seg3_end-b]
+y = ilc_m[seg2_end:seg3_end]
+y_fit = ilc_m[seg2_end+b:seg3_end-b]
+p = np.polynomial.Polynomial.fit(t_fit, y_fit, deg=deg)
+y_smooth = p(t)
+
+if debugPoly is True:
+    make_lightcurve([t, t, t],
+                    [1000*y, 1000*y_smooth, 1000*(y - y_smooth)],
+                    vmin, vmax,
+                    [2, 0.5, 1],
+                    [color["I"], color["I"], color["I"]],
+                    [0.4, 0.8, 1.0],
+                    ['Original data', 'Fitted curve', 'Residual'],
+                    'MeerKAT_StokesI_polyfit_segment3.png',
+                    imwidth=8)
+
+ilc_m[seg2_end:seg3_end] = y - y_smooth
+# And now flag the buffer
+ilc_m[seg2_end:seg2_end+b] = np.nan
+ilc_m[seg3_end-b:seg3_end] = np.nan
+
+# Segment 4
+vmin, vmax = -10, 60
+deg = 3
+t = times_m[seg3_end:]
+t_fit = times_m[seg3_end+b:-b]
+y = ilc_m[seg3_end:]
+y_fit = ilc_m[seg3_end+b:-b]
+p = np.polynomial.Polynomial.fit(t_fit, y_fit, deg=deg)
+y_smooth = p(t)
+
+if debugPoly is True:
+    make_lightcurve([t, t, t],
+                    [1000*y, 1000*y_smooth, 1000*(y - y_smooth)],
+                    vmin, vmax,
+                    [2, 0.5, 1],
+                    [color["I"], color["I"], color["I"]],
+                    [0.4, 0.8, 1.0],
+                    ['Original data', 'Fitted curve', 'Residual'],
+                    'MeerKAT_StokesI_polyfit_segment4.png',
+                    imwidth=8)
+
+ilc_m[seg3_end:] = y - y_smooth
+# And now flag the buffer
+ilc_m[seg3_end:seg3_end+b] = np.nan
+ilc_m[-b:] = np.nan
+
 # Plot light curves
 vmin, vmax = -3, 20
-make_lightcurve(times_mz, 1000*ilc_m, vmin, vmax, 0.5, lc["I"], 1.0, 'Stokes I', 'MeerKAT_StokesI_light_curve.png', offset=times_m[0])
+make_lightcurve(times_mz, 1000*ilc_m, vmin, vmax, 0.5, color["I"], 1.0, 'Stokes I', 'MeerKAT_StokesI_light_curve.png', offset=times_m[0])
 vmin, vmax = -20, 20
-make_lightcurve(times_mz, 1000*qlc_m, vmin, vmax, 0.5, lc["Q"], 1.0, 'Stokes Q', 'MeerKAT_StokesQ_light_curve.png', offset=times_m[0])
-make_lightcurve(times_mz, 1000*ulc_m, vmin, vmax, 0.5, lc["U"], 1.0, 'Stokes U', 'MeerKAT_StokesU_light_curve.png', offset=times_m[0])
-make_lightcurve(times_mz, 1000*vlc_m, vmin, vmax, 0.5, lc["V"], 1.0, 'Stokes V', 'MeerKAT_StokesV_light_curve.png', offset=times_m[0])
+make_lightcurve(times_mz, 1000*qlc_m, vmin, vmax, 0.5, color["Q"], 1.0, 'Stokes Q', 'MeerKAT_StokesQ_light_curve.png', offset=times_m[0])
+make_lightcurve(times_mz, 1000*ulc_m, vmin, vmax, 0.5, color["U"], 1.0, 'Stokes U', 'MeerKAT_StokesU_light_curve.png', offset=times_m[0])
+make_lightcurve(times_mz, 1000*vlc_m, vmin, vmax, 0.5, color["V"], 1.0, 'Stokes V', 'MeerKAT_StokesV_light_curve.png', offset=times_m[0])
 make_lightcurve([times_mz, times_mz, times_mz],
                 [1000*qlc_m, 1000*ulc_m, 1000*vlc_m],
                 vmin, vmax,
                 [0.5, 0.5, 0.5],
-                [lc["Q"], lc["U"], lc["V"]],
+                [color["Q"], color["U"], color["V"]],
                 [1.0, 1.0, 1.0],
                 ['Stokes Q', 'Stokes U', 'Stokes V'],
                 'MeerKAT_StokesQUV_light_curve.png', offset=times_m[0])
+
+vmin, vmax = -3, 8
+make_lightcurve([times_mz[indstart:indend], times_mz[indstart:indend], times_mz[indstart:indend]],
+                [1000*qlc_m[indstart:indend], 1000*ulc_m[indstart:indend], 1000*vlc_m[indstart:indend]],
+                vmin, vmax,
+                [0.5, 0.5, 0.5],
+                [color["Q"], color["U"], color["V"]],
+                [1.0, 1.0, 1.0],
+                ['Stokes Q', 'Stokes U', 'Stokes V'],
+                'MeerKAT_StokesQUV_light_curve_zoom.png',
+                offset=times_m[indstart],
+                imwidth=5)
 
 # find the common time range
 
@@ -260,61 +417,100 @@ ax.set_xlim(tstart, tend)
 ax.legend(loc=1)
 fig.savefig("Joint_StokesQUV_lightcurve.png", bbox_inches="tight")
 
-# Fold the data
-# Put these into MJD (instead of MJD seconds)
-trange = times_a / (24*3600)
+if makeFold is True:
+    # Fold the ASKAP data
+    # Put these into MJD (instead of MJD seconds)
+    trange = times_a / (24*3600)
 
-phase = np.mod(trange, 2*P)/(2*P)
-idx = np.argsort(phase)
+    phase = np.mod(trange, 2*P)/(2*P)
+    idx = np.argsort(phase)
 
-num_bins = 150
+    num_bins = 150
 
-bin_edges = np.linspace(0, 1, num_bins + 1)
-bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-bin_indices = np.digitize(phase[idx], bin_edges) - 1
+    bin_edges = np.linspace(0, 1, num_bins + 1)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    bin_indices = np.digitize(phase[idx], bin_edges) - 1
 
-I_sums = np.bincount(bin_indices, weights=1000*ilc_a[idx], minlength=num_bins)
-Q_sums = np.bincount(bin_indices, weights=1000*qlc_a[idx], minlength=num_bins)
-U_sums = np.bincount(bin_indices, weights=1000*ulc_a[idx], minlength=num_bins)
-V_sums = np.bincount(bin_indices, weights=1000*vlc_a[idx], minlength=num_bins)
+    I_sums = np.bincount(bin_indices, weights=1000*ilc_a[idx], minlength=num_bins)
+    Q_sums = np.bincount(bin_indices, weights=1000*qlc_a[idx], minlength=num_bins)
+    U_sums = np.bincount(bin_indices, weights=1000*ulc_a[idx], minlength=num_bins)
+    V_sums = np.bincount(bin_indices, weights=1000*vlc_a[idx], minlength=num_bins)
 
-counts = np.bincount(bin_indices, minlength=num_bins)
+    counts = np.bincount(bin_indices, minlength=num_bins)
 
-# Prevent division by zero if a bin is empty
-I_binned_average = I_sums / np.where(counts == 0, 1, counts)
-Q_binned_average = Q_sums / np.where(counts == 0, 1, counts)
-U_binned_average = U_sums / np.where(counts == 0, 1, counts)
-V_binned_average = V_sums / np.where(counts == 0, 1, counts)
+    # Prevent division by zero if a bin is empty
+    I_binned_average = I_sums / np.where(counts == 0, 1, counts)
+    Q_binned_average = Q_sums / np.where(counts == 0, 1, counts)
+    U_binned_average = U_sums / np.where(counts == 0, 1, counts)
+    V_binned_average = V_sums / np.where(counts == 0, 1, counts)
 
-fig = plt.figure(figsize=(8,5))
-ax = fig.add_subplot(111)
-ax.plot(bin_centers, I_binned_average, color=lc['I'], alpha=0.8, lw=0.5, label="Stokes I")
-ax.plot(bin_centers, Q_binned_average, color=lc['Q'], alpha=0.8, lw=0.5, label="Stokes Q")
-ax.plot(bin_centers, U_binned_average, color=lc['U'], alpha=0.8, lw=0.5, label="Stokes U")
-ax.plot(bin_centers, V_binned_average, color=lc['V'], alpha=0.8, lw=0.5, label="Stokes V")
-ax.set_xlabel("Phase")
-ax.set_ylabel("Mean brightness (mJy)")
-ax.legend(loc=1)
-fig.savefig("Folded_EMU_light_curve.png", bbox_inches="tight")
+    fig = plt.figure(figsize=(8,5))
+    ax = fig.add_subplot(111)
+    ax.plot(bin_centers, I_binned_average, color=color['I'], alpha=0.8, lw=0.5, label="Stokes I")
+    ax.plot(bin_centers, Q_binned_average, color=color['Q'], alpha=0.8, lw=0.5, label="Stokes Q")
+    ax.plot(bin_centers, U_binned_average, color=color['U'], alpha=0.8, lw=0.5, label="Stokes U")
+    ax.plot(bin_centers, V_binned_average, color=color['V'], alpha=0.8, lw=0.5, label="Stokes V")
+    ax.set_xlabel("Phase")
+    ax.set_ylabel("Mean brightness (mJy)")
+    ax.legend(loc=1)
+    fig.savefig("Folded_EMU_light_curve.png", bbox_inches="tight")
 
-## Load the rest of the .pkl files and calculate RMS and time for non-detections plot
-#
-#pkls = sorted(glob.glob("dynspec/*RACS*pkl") + glob.glob("dynspec/*VAST*pkl") + glob.glob("dynspec/*SB43773*pkl") + glob.glob("dynspec/*SB33284*pkl"))
-#
-#mjds = []
-#rmss = []
-#for pkl in pkls:
-#    arr = np.load(pkl, allow_pickle=True)
-#    mjds.append(arr["TIMES"][int(len(arr["TIMES"])/2)]/(24*3600))
-#    rmss.append(np.nanstd(np.nanmean(np.real((arr["DS"][:,:,XX]+arr["DS"][:,:,YY])),axis=1)))
-#
-#fig = plt.figure(figsize=(8,5))
-#ax = fig.add_subplot(111)
-#ax.scatter(mjds, 1000*np.array(rmss), marker='v', color='black', label='1-sigma RMS\n(10s time resolution)')
-#ax.set_xlabel("MJD")
-#ax.set_ylabel("Flux density (mJy)")
-#ax.scatter(T0, 17., color='red', marker='*', label='EMU Pilot detection\n(brightest pulse)')
-#ax.errorbar(T0, 17., yerr=1, color='red')
-#ax.legend(loc=1)
-#fig.savefig("Non-detections_ASKAP.png", bbox_inches="tight")
+    # Fold the MeerKAT (QUV) data
+    # TODO: Need to apply a parallactic angle correction before this will work properly
+    trange = times_m / (24*3600)
+
+    phase = np.mod(trange, 2*P)/(2*P)
+    idx = np.argsort(phase)
+
+    num_bins = 140
+
+    bin_edges = np.linspace(0, 1, num_bins + 1)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    bin_indices = np.digitize(phase[idx], bin_edges) - 1
+
+    I_sums = np.bincount(bin_indices, weights=1000*ilc_m[idx], minlength=num_bins)
+    Q_sums = np.bincount(bin_indices, weights=1000*qlc_m[idx], minlength=num_bins)
+    U_sums = np.bincount(bin_indices, weights=1000*ulc_m[idx], minlength=num_bins)
+    V_sums = np.bincount(bin_indices, weights=1000*vlc_m[idx], minlength=num_bins)
+
+    counts = np.bincount(bin_indices, minlength=num_bins)
+
+    # Prevent division by zero if a bin is empty
+    I_binned_average = I_sums / np.where(counts == 0, 1, counts)
+    Q_binned_average = Q_sums / np.where(counts == 0, 1, counts)
+    U_binned_average = U_sums / np.where(counts == 0, 1, counts)
+    V_binned_average = V_sums / np.where(counts == 0, 1, counts)
+
+    fig = plt.figure(figsize=(8,5))
+    ax = fig.add_subplot(111)
+    ax.plot(bin_centers, I_binned_average, color=color['I'], alpha=0.8, lw=0.5, label="Stokes I")
+    ax.plot(bin_centers, Q_binned_average, color=color['Q'], alpha=0.8, lw=0.5, label="Stokes Q")
+    ax.plot(bin_centers, U_binned_average, color=color['U'], alpha=0.8, lw=0.5, label="Stokes U")
+    ax.plot(bin_centers, V_binned_average, color=color['V'], alpha=0.8, lw=0.5, label="Stokes V")
+    ax.set_xlabel("Phase")
+    ax.set_ylabel("Mean brightness (mJy)")
+    ax.legend(loc=1)
+    fig.savefig("Folded_MeerKAT_light_curve.png", bbox_inches="tight")
+
+# Load the rest of the .pkl files and calculate RMS and time for non-detections plot
+
+if makeUpperlimits is True:
+    pkls = sorted(glob.glob("dynspec/*RACS*pkl") + glob.glob("dynspec/*VAST*pkl") + glob.glob("dynspec/*SB43773*pkl") + glob.glob("dynspec/*SB33284*pkl"))
+
+    mjds = []
+    rmss = []
+    for pkl in pkls:
+        arr = np.load(pkl, allow_pickle=True)
+        mjds.append(arr["TIMES"][int(len(arr["TIMES"])/2)]/(24*3600))
+        rmss.append(np.nanstd(np.nanmean(np.real((arr["DS"][:,:,XX]+arr["DS"][:,:,YY])),axis=1)))
+
+    fig = plt.figure(figsize=(8,5))
+    ax = fig.add_subplot(111)
+    ax.scatter(mjds, 1000*np.array(rmss), marker='v', color='black', label='1-sigma RMS\n(10s time resolution)')
+    ax.set_xlabel("MJD")
+    ax.set_ylabel("Flux density (mJy)")
+    ax.scatter(T0, 17., color='red', marker='*', label='EMU Pilot detection\n(brightest pulse)')
+    ax.errorbar(T0, 17., yerr=1, color='red')
+    ax.legend(loc=1)
+    fig.savefig("Non-detections_ASKAP.png", bbox_inches="tight")
 
