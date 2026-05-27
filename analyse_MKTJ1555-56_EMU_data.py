@@ -10,7 +10,7 @@ makeDynspec = False
 makeLightcurves = False
 makeFold = True
 makeUpperlimits = False
-debugPoly = False
+debugPoly = True
 
 T0 = 59713.512505
 P = 0.02168 # days
@@ -245,11 +245,11 @@ seg2_end = tbreak[1]+1
 seg3_end = tbreak[2]+1
 
 # I noticed the first and last samples are bad in each scan, so we will flag those
-b = 9 # b for buffer
 
 # Segment 1
 deg = 3
 vmin, vmax = -10, 30
+b = 3 # b for buffer
 
 t = times_m[:seg1_end]
 t_fit = times_m[b:seg1_end-b]
@@ -273,10 +273,17 @@ ilc_m[:seg1_end] = y - y_smooth
 # And now flag the buffer
 ilc_m[0:b] = np.nan
 ilc_m[seg1_end-b:seg1_end] = np.nan
+qlc_m[0:b] = np.nan
+qlc_m[seg1_end-b:seg1_end] = np.nan
+ulc_m[0:b] = np.nan
+ulc_m[seg1_end-b:seg1_end] = np.nan
+vlc_m[0:b] = np.nan
+vlc_m[seg1_end-b:seg1_end] = np.nan
 
 # Segment 2
 deg = 3
 vmin, vmax = -30, 30
+b = 10 # b for buffer
 t = times_m[seg1_end:seg2_end]
 t_fit = times_m[seg1_end+b:seg2_end-b]
 y = ilc_m[seg1_end:seg2_end]
@@ -299,10 +306,17 @@ ilc_m[seg1_end:seg2_end] = y - y_smooth
 # And now flag the buffer
 ilc_m[seg1_end:seg1_end+b] = np.nan
 ilc_m[seg2_end-b:seg2_end] = np.nan
+qlc_m[seg1_end:seg1_end+b] = np.nan
+qlc_m[seg2_end-b:seg2_end] = np.nan
+ulc_m[seg1_end:seg1_end+b] = np.nan
+ulc_m[seg2_end-b:seg2_end] = np.nan
+vlc_m[seg1_end:seg1_end+b] = np.nan
+vlc_m[seg2_end-b:seg2_end] = np.nan
 
 # Segment 3
 deg = 3
 vmin, vmax = -30, 25
+b = 10 
 t = times_m[seg2_end:seg3_end]
 t_fit = times_m[seg2_end+b:seg3_end-b]
 y = ilc_m[seg2_end:seg3_end]
@@ -325,10 +339,17 @@ ilc_m[seg2_end:seg3_end] = y - y_smooth
 # And now flag the buffer
 ilc_m[seg2_end:seg2_end+b] = np.nan
 ilc_m[seg3_end-b:seg3_end] = np.nan
+qlc_m[seg2_end:seg2_end+b] = np.nan
+qlc_m[seg3_end-b:seg3_end] = np.nan
+ulc_m[seg2_end:seg2_end+b] = np.nan
+ulc_m[seg3_end-b:seg3_end] = np.nan
+vlc_m[seg2_end:seg2_end+b] = np.nan
+vlc_m[seg3_end-b:seg3_end] = np.nan
 
 # Segment 4
 vmin, vmax = -10, 60
 deg = 3
+b = 10
 t = times_m[seg3_end:]
 t_fit = times_m[seg3_end+b:-b]
 y = ilc_m[seg3_end:]
@@ -351,6 +372,12 @@ ilc_m[seg3_end:] = y - y_smooth
 # And now flag the buffer
 ilc_m[seg3_end:seg3_end+b] = np.nan
 ilc_m[-b:] = np.nan
+qlc_m[seg3_end:seg3_end+b] = np.nan
+qlc_m[-b:] = np.nan
+ulc_m[seg3_end:seg3_end+b] = np.nan
+ulc_m[-b:] = np.nan
+vlc_m[seg3_end:seg3_end+b] = np.nan
+vlc_m[-b:] = np.nan
 
 # Plot light curves
 vmin, vmax = -3, 20
@@ -455,14 +482,14 @@ if makeFold is True:
     ax.legend(loc=1)
     fig.savefig("Folded_EMU_light_curve.png", bbox_inches="tight")
 
-    # Fold the MeerKAT (QUV) data
+    # Fold the MeerKAT data
     # TODO: Need to apply a parallactic angle correction before this will work properly
     trange = times_m / (24*3600)
 
     phase = np.mod(trange, 2*P)/(2*P)
     idx = np.argsort(phase)
 
-    num_bins = 140
+    num_bins = 150
 
     bin_edges = np.linspace(0, 1, num_bins + 1)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
