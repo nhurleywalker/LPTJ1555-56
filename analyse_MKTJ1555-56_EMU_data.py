@@ -7,10 +7,11 @@ import glob
 import sys
 
 makeDynspec = False
-makeLightcurves = True
+makeLightcurves = False
 makeFold = False
+debugPoly = False
+makeJointIQUV = False
 makeUpperlimits = False
-debugPoly = True
 
 T0 = 59713.512505
 P = 0.02168 # days
@@ -237,23 +238,24 @@ Qt_m = np.real((-mkt["DS"][:,:,XY]-mkt["DS"][:,:,YX]))/2
 Ut_m = np.real((mkt["DS"][:,:,XX]-mkt["DS"][:,:,YY]))/2
 Vt_m = np.real((-1j*mkt["DS"][:,:,XY]+1j*mkt["DS"][:,:,YX]))/2
 
-# Form individual Stokes dynamic spectra
-vmin, vmax = -0.005, 0.03
-make_dynspec(It_m.T, vmin, vmax, cmap["I"], [0, times_mz[-1], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesI_dynspec.png")
-
-vmin, vmax = -0.005, 0.005
-make_dynspec(Qt_m.T, vmin, vmax, cmap["Q"], [0, times_mz[-1], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesQ_dynspec.png")
-make_dynspec(Ut_m.T, vmin, vmax, cmap["U"], [0, times_mz[-1], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesU_dynspec.png")
-make_dynspec(Vt_m.T, vmin, vmax, cmap["V"], [0, times_mz[-1], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesV_dynspec.png")
-
-# Zoom in on that really interesting bit
 indstart = 460
 indend = 505
 i = 22
-vmin, vmax = -0.005, 0.005
-make_dynspec(Qt_m[indstart:indend].T, vmin, vmax, cmap["Q"], [times_mz[indstart], times_mz[indend], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesQ_dynspec_zoom.png", imwidth=5)
-make_dynspec(Ut_m[indstart:indend].T, vmin, vmax, cmap["U"], [times_mz[indstart], times_mz[indend], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesU_dynspec_zoom.png", imwidth=5)
-make_dynspec(Vt_m[indstart:indend].T, vmin, vmax, cmap["V"], [times_mz[indstart], times_mz[indend], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesV_dynspec_zoom.png", imwidth=5)
+if makeDynspec is True:
+    # Form individual Stokes dynamic spectra
+    vmin, vmax = -0.005, 0.03
+    make_dynspec(It_m.T, vmin, vmax, cmap["I"], [0, times_mz[-1], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesI_dynspec.png")
+
+    vmin, vmax = -0.005, 0.005
+    make_dynspec(Qt_m.T, vmin, vmax, cmap["Q"], [0, times_mz[-1], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesQ_dynspec.png")
+    make_dynspec(Ut_m.T, vmin, vmax, cmap["U"], [0, times_mz[-1], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesU_dynspec.png")
+    make_dynspec(Vt_m.T, vmin, vmax, cmap["V"], [0, times_mz[-1], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesV_dynspec.png")
+
+    # Zoom in on that really interesting bit
+    vmin, vmax = -0.005, 0.005
+    make_dynspec(Qt_m[indstart:indend].T, vmin, vmax, cmap["Q"], [times_mz[indstart], times_mz[indend], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesQ_dynspec_zoom.png", imwidth=5)
+    make_dynspec(Ut_m[indstart:indend].T, vmin, vmax, cmap["U"], [times_mz[indstart], times_mz[indend], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesU_dynspec_zoom.png", imwidth=5)
+    make_dynspec(Vt_m[indstart:indend].T, vmin, vmax, cmap["V"], [times_mz[indstart], times_mz[indend], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesV_dynspec_zoom.png", imwidth=5)
 
 # Form light curves
 ilc_m = np.nanmean(It_m, axis=1)
@@ -442,6 +444,32 @@ make_lightcurve([times_mz[indstart:indend], times_mz[indstart:indend], times_mz[
                 offset=times_m[indstart],
                 imwidth=5)
 
+# Can we use this to constrain the RM and/or test whether there is Faraday rotation?
+# I noticed there is a nasty RFI spike in channel index 871
+# And values up to index 16 are not trustworthy
+Qt_m[:, 871] = np.nan
+Ut_m[:, 871] = np.nan
+Vt_m[:, 871] = np.nan
+
+Qt_m[:, 0:17] = np.nan
+Ut_m[:, 0:17] = np.nan
+Vt_m[:, 0:17] = np.nan
+
+
+# These are really only informative for finding RFI
+for i in range(indstart, indend):
+    if ilc_m[i] > 0.001:
+        fig = plt.figure(figsize=(8,5))
+        ax = fig.add_subplot(111)
+#        ax.plot(freqs_m, 1000*It_m[i], color = color["I"], lw=0.5,  label="Stokes I")
+        ax.plot(freqs_m, 1000*Qt_m[i], color = color["Q"], lw=0.5,  label="Stokes Q")
+        ax.plot(freqs_m, 1000*Ut_m[i], color = color["U"], lw=0.5,  label="Stokes U")
+        ax.plot(freqs_m, 1000*Vt_m[i], color = color["V"], lw=0.5,  label="Stokes V")
+        ax.set_xlabel("Frequency / GHz")
+        ax.set_ylabel("Flux density / mJy")
+        t = times_m[i]
+        fig.savefig(f"MeerKAT_IQUV_spectrum_{t}.png", bbox_inches="tight")
+
 # find the common time range
 
 tstart = np.nanmin([arr1["TIMES"][0], mkt["TIMES"][0]])
@@ -450,34 +478,35 @@ tend = np.nanmax([arr1["TIMES"][-1], mkt["TIMES"][-1]])
 # Zoom in on the interesting section, make joint plots
 tstart, tend = 5159271500.0, 5159272500.0
 
-fig = plt.figure(figsize=(5,5))
-ax = fig.add_subplot(111)
-ax.set_ylabel("brightness (mJy/beam)")
-ax.set_xlabel("time / s")
-ax.plot(times_a, 1000*ilc_a, lw=2, color='darkgrey', alpha=0.5, label="ASKAP Stokes I")
-ax.plot(times_m, 1000*ilc_m, lw=0.5, color='black', alpha=0.8, label="MeerKAT Stokes I")
-for i in range(-3, 30):
-    ax.axvline(ephem(i)*24*3600, alpha=0.4, color='orange')
-ax.set_xlim(tstart, tend)
-ax.set_ylim(-10, 30)
-ax.legend(loc=1)
-fig.savefig("Joint_StokesI_lightcurve.png", bbox_inches="tight")
+if makeJointIQUV is True:
+    fig = plt.figure(figsize=(5,5))
+    ax = fig.add_subplot(111)
+    ax.set_ylabel("brightness (mJy/beam)")
+    ax.set_xlabel("time / s")
+    ax.plot(times_a, 1000*ilc_a, lw=2, color='darkgrey', alpha=0.5, label="ASKAP Stokes I")
+    ax.plot(times_m, 1000*ilc_m, lw=0.5, color='black', alpha=0.8, label="MeerKAT Stokes I")
+    for i in range(-3, 30):
+        ax.axvline(ephem(i)*24*3600, alpha=0.4, color='orange')
+    ax.set_xlim(tstart, tend)
+    ax.set_ylim(-10, 30)
+    ax.legend(loc=1)
+    fig.savefig("Joint_StokesI_lightcurve.png", bbox_inches="tight")
 
-fig = plt.figure(figsize=(5,5))
-ax = fig.add_subplot(111)
-ax.set_ylabel("brightness (mJy/beam)")
-ax.set_xlabel("time / s")
-ax.plot(times_a, 1000*qlc_a, lw=2, color='red', alpha=0.5, label="ASKAP Stokes Q") 
-ax.plot(times_m, 1000*qlc_m, lw=0.5, color='darkred', alpha=0.8, label="MeerKAT Stokes Q") 
-ax.plot(times_a, 1000*ulc_a, lw=2, color='blue', alpha=0.5, label="ASKAP Stokes U")
-ax.plot(times_m, 1000*ulc_m, lw=0.5, color='darkblue', alpha=0.8, label="MeerKAT Stokes U")
-ax.plot(times_a, 1000*vlc_a, lw=2, color='green', alpha=0.5, label="ASKAP Stokes V")
-ax.plot(times_m, 1000*vlc_m, lw=0.5, color='darkgreen', alpha=0.8, label="MeerKAT Stokes V")
-for i in range(-3, 30):
-    ax.axvline(ephem(i)*24*3600, alpha=0.4, color='orange')
-ax.set_xlim(tstart, tend)
-ax.legend(loc=1)
-fig.savefig("Joint_StokesQUV_lightcurve.png", bbox_inches="tight")
+    fig = plt.figure(figsize=(5,5))
+    ax = fig.add_subplot(111)
+    ax.set_ylabel("brightness (mJy/beam)")
+    ax.set_xlabel("time / s")
+    ax.plot(times_a, 1000*qlc_a, lw=2, color='red', alpha=0.5, label="ASKAP Stokes Q") 
+    ax.plot(times_m, 1000*qlc_m, lw=0.5, color='darkred', alpha=0.8, label="MeerKAT Stokes Q") 
+    ax.plot(times_a, 1000*ulc_a, lw=2, color='blue', alpha=0.5, label="ASKAP Stokes U")
+    ax.plot(times_m, 1000*ulc_m, lw=0.5, color='darkblue', alpha=0.8, label="MeerKAT Stokes U")
+    ax.plot(times_a, 1000*vlc_a, lw=2, color='green', alpha=0.5, label="ASKAP Stokes V")
+    ax.plot(times_m, 1000*vlc_m, lw=0.5, color='darkgreen', alpha=0.8, label="MeerKAT Stokes V")
+    for i in range(-3, 30):
+        ax.axvline(ephem(i)*24*3600, alpha=0.4, color='orange')
+    ax.set_xlim(tstart, tend)
+    ax.legend(loc=1)
+    fig.savefig("Joint_StokesQUV_lightcurve.png", bbox_inches="tight")
 
 if makeFold is True:
     # Fold the ASKAP data
@@ -518,7 +547,7 @@ if makeFold is True:
     fig.savefig("Folded_EMU_light_curve.png", bbox_inches="tight")
 
     # Fold the MeerKAT data
-    # TODO: Need to apply a parallactic angle correction before this will work properly
+    # TODO: Need to solve for the polarisation calibration AND apply a parallactic angle correction before this makese sense
     trange = times_m / (24*3600)
 
     phase = np.mod(trange, 2*P)/(2*P)
