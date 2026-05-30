@@ -8,19 +8,25 @@ import sys
 
 makeDynspec = False
 makeLightcurves = False
-makeFold = False
+makeFold = True
 debugPoly = False
 makeJointIQUV = False
 makeUpperlimits = False
 
 T0 = 59713.512505
-P = 0.02168 # days
+P = 0.995*0.02168 # days
 
 def ephem(n):
     return T0 + n*P
 
+#def pulsenum(mjd):
+#    return (mjd - T0) / P
+
 def pulsenum(mjd):
-    return (mjd - T0) / P
+    return (mjd - T0) / (2*P)
+
+def ipulsenum(mjd):
+    return (mjd - T0) / (P)
 
 def make_dynspec(data, vmin, vmax, cmap, extent, outname, imwidth=13):
     fig = plt.figure(figsize=(imwidth,5))
@@ -513,10 +519,10 @@ if makeFold is True:
     # Put these into MJD (instead of MJD seconds)
     trange = times_a / (24*3600)
 
-    phase = np.mod(trange, 2*P)/(2*P)
+    phase = np.mod(trange - T0 + P, 2*P)/(2*P)
     idx = np.argsort(phase)
 
-    num_bins = 150
+    num_bins = 200
 
     bin_edges = np.linspace(0, 1, num_bins + 1)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
@@ -605,3 +611,35 @@ if makeUpperlimits is True:
     ax.legend(loc=1)
     fig.savefig("Non-detections_ASKAP.png", bbox_inches="tight")
 
+# Look at the accuracy of the ephemeris by plotting each pulse
+
+trange = times_a / (24*3600)
+# Note the addition of 1 period here
+phase = np.mod(trange - T0 + P, 2*P)/(2*P)
+# and half a turn of phase here, +1 to get away from +/-zero where everything gets labelled zero
+pulsenums = (2.5 + pulsenum(trange)).astype('int')
+# Makes it easier to see the lightcurves
+minpulsenum = pulsenums[0]
+maxpulsenum = pulsenums[-1]
+
+ind = 1
+fig = plt.figure(figsize=(5,15))
+for n in range(minpulsenum, maxpulsenum):
+    ax = fig.add_subplot(maxpulsenum-minpulsenum,1,ind)
+    ax.plot(phase[pulsenums==n], 1000*ilc_a[pulsenums==n], color=color["I"], alpha=0.8, label=f"{n}")
+#ax.set_ylabel("brightness (mJy/beam)")
+#ax.set_xlabel("time / s")
+    ax.set_ylim(-3, 20)
+    ax.set_xlim(-0.05, 1.05)
+    ax.axvline(0.05, alpha=0.4, color='orange')
+    ax.axvline(0.52, alpha=0.8, color='orange')
+    ax.legend()
+    if ind != (maxpulsenum-minpulsenum):
+        ax.tick_params(axis='x', labelbottom=False)
+    ind += 1
+ax.set_xlabel("Phase")
+#ax.set_xlim(tstart, tend)
+#ax.legend(loc=1)
+fig.savefig("Ephemeris_lightcurve.png", bbox_inches="tight")
+
+# Now include MeerKAT data
