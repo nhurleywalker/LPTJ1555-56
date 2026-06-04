@@ -2,25 +2,31 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from astropy.time import Time
+from astropy.coordinates import SkyCoord
+from astropy import units as u
 
 import glob
 import sys
 
-makeDynspec = False
-makeLightcurves = False
+makeDynspec = True
+makeLightcurves = True
 makeFold = True
 debugPoly = False
-makeJointIQUV = False
+makeJointIQUV = True
 makeUpperlimits = False
 
 T0 = 59713.512505
-P = 0.995*0.02168 # days
+P = 62.2028 / (2*24*60) # minutes into days
+
+source_sc = SkyCoord("15h55m43.69s -56d31m02.4s", frame='fk5')
+beam_names = ["09", "15"]
+beams_sc = SkyCoord(["15h58m56.563 -56d53m16.761", "15h55m36.850 -56d06m49.968"], frame='fk5')
+
+# ASKAP Aperture radius (m)
+a = 6
 
 def ephem(n):
     return T0 + n*P
-
-#def pulsenum(mjd):
-#    return (mjd - T0) / P
 
 def pulsenum(mjd):
     return (mjd - T0) / (2*P)
@@ -55,6 +61,64 @@ def make_lightcurve(times, lc, vmin, vmax, lw, color, alpha, label, outname, off
     ax.legend(loc=1)
     fig.savefig(outname, bbox_inches="tight")
 
+class GaussianPB:
+    
+    def __init__(self,aperture = 12.0, expscaling = 4.0 * np.log(2.0), frequency = 1.1e9):
+        
+        self.aperture = aperture
+        self.expScaling = expscaling
+        self.frequency=frequency
+        self.setXwidth(self.getFWHM())
+        self.setYwidth(self.getFWHM())
+        self.setAlpha(0.0)
+        self.setXoff(0.0)
+        self.setYoff(0.0)
+        
+    
+    def getFWHM(self):
+        sol = 299792458.0;
+        fwhm = sol / self.frequency / self.aperture
+        return fwhm
+    
+    def evaluate(self,offset = 0.0, freq = 0.0):
+        if (freq > 0):
+            self.frequency=freq
+            
+        pb = np.exp(-offset * offset * self.expScaling / (self.getFWHM() * self.getFWHM()))
+        return pb
+    
+    def setXwidth(self,xwidth):
+        self.xwidth = xwidth
+        
+    def setYwidth(self,ywidth):
+        self.ywidth = ywidth
+        
+    def setAlpha(self,Angle):
+        self.Alpha = Angle
+        
+    def setXoff(self,xoff):
+        self.xoff = xoff
+        
+    def setYoff(self,yoff):
+        self.yoff = yoff
+        
+    def evaluateAtOffset(self,offsetPAngle=0, offsetDist=0, freq=0):
+            
+        # x-direction is assumed along the meridian in the direction of north celestial pole
+        # the offsetPA angle is relative to the meridian
+        # the Alpha angle is the rotation of the beam pattern relative to the meridian
+        # Therefore the offset relative to the
+                
+        if (freq > 0):
+            self.frequency=freq
+            
+        x_angle = offsetDist * np.cos(offsetPAngle - self.Alpha)
+        y_angle = offsetDist * np.sin(offsetPAngle - self.Alpha)
+                    
+        x_pb = np.exp(-1.0 * self.expScaling * np.power((x_angle - self.xoff) / self.xwidth, 2.0))
+        y_pb = np.exp(-1.0 * self.expScaling * np.power((y_angle - self.yoff) / self.ywidth, 2.0))
+
+        return x_pb * y_pb
 XX = 0
 XY = 1
 YX = 2
@@ -69,10 +133,10 @@ color = { "I" : "black",
          "Q" : "red",
          "U" : "blue",
          "V" : "green" }
-# TODO find positions in primary beams and take weighted average, correct for beam attenuation
+
 arr1 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam15_averaged_cal.leakage.pkl", allow_pickle=True)
 arr2 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam09_averaged_cal.leakage.pkl", allow_pickle=True)
-# This version has been run through a different set of software to try to get saner polarisation results
+# This version has been run through FixMS, which is current ASKAP best practice
 arr3 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam09_averaged_cal.leakage_fixms.pkl", allow_pickle=True)
 arr4 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam15_averaged_cal.leakage_fixms.pkl", allow_pickle=True)
 
@@ -145,10 +209,52 @@ Ut4[:,0:16] = np.nan
 Vt4[:,0:16] = np.nan
 
 # Let's use the FixMS version since Alec is confident about that
-It = (It3 + It4) / 2
-Qt = (Qt3 + Qt4) / 2
-Ut = (Ut3 + Ut4) / 2
-Vt = (Vt3 + Vt4) / 2
+# These are the values printed from the single-frequency code, in order to calibrate our expectations below
+# Nearest beam to source is beam 15 with a separation of 0.404 deg
+#Apply primary beam correction factor of: 1.511
+#Next-nearest beam to source is beam 09 with a separation of 0.576 deg
+#Apply primary beam correction factor of: 2.317
+
+# Get the weights for each beam. Array 3 is beam 9 and Array 4 is beam 15.
+seps = beams_sc.separation(source_sc)
+print(seps)
+
+#Beam 09
+pb_vals = []
+for freq in freqs_a:
+    pb = GaussianPB(frequency = freq*1.e9)
+    pb_vals.append(pb.evaluate(seps[0].rad, freq=freq*1.e9))
+# This is an array of numbers >1 that you would need to multiply by, shaped into a time, frequency 2D array
+pb_corr_3 = 1. / np.tile(np.array(pb_vals), (It3.shape[0],1))
+
+# Sanity check
+fig = plt.figure(figsize=(8,5))
+ax = fig.add_axes([0.1, 0.1, 0.8, 0.9])
+cax = fig.add_axes([0.92, 0.1, 0.05, 0.9])
+img = ax.imshow(pb_corr_3.T, origin='lower', aspect='auto')
+plt.colorbar(img, cax=cax)
+ax.set_xlabel("time")
+ax.set_ylabel("channel")
+fig.savefig("pb_corr_test.png", bbox_inches="tight")
+
+# Beam 15
+pb_vals = []
+for freq in freqs_a:
+    pb = GaussianPB(frequency = freq*1.e9)
+    pb_vals.append(pb.evaluate(seps[1].rad, freq=freq*1.e9))
+# This is an array of numbers >1 that you would need to multiply by, shaped into a time, frequency 2D array
+pb_corr_4 = 1. / np.tile(np.array(pb_vals), (It4.shape[0],1))
+
+# Correcting for the primary beam means multiplying by the primary beam correction (which is inversely proportional to distance to the phase centre)
+# Weighting by the primary beam means dividing by the primary beam correction (as big numbers are bad!)
+# So, effectively, those terms cancel out, and at the end we want to simply divide by the sum of the inverse of the primary beam corrections
+
+w3 = 1/ pb_corr_3
+w4 = 1/ pb_corr_4
+It = (It3 + It4) / (w3 + w4)
+Qt = (Qt3 + Qt4) / (w3 + w4)
+Ut = (Ut3 + Ut4) / (w3 + w4)
+Vt = (Vt3 + Vt4) / (w3 + w4)
 
 # Form individual Stokes dynamic spectra -- of each beam, so we can check they agree, and then the combined data
 if makeDynspec is True:
@@ -541,8 +647,11 @@ if makeFold is True:
     U_binned_average = U_sums / np.where(counts == 0, 1, counts)
     V_binned_average = V_sums / np.where(counts == 0, 1, counts)
 
+    phase_start = 0.49
+    phase_end = 0.53
     fig = plt.figure(figsize=(8,5))
     ax = fig.add_subplot(111)
+    ax.axvspan(phase_start, phase_end, alpha=0.3, color='m')
     ax.plot(bin_centers, I_binned_average, color=color['I'], alpha=0.8, lw=0.5, label="Stokes I")
     ax.plot(bin_centers, Q_binned_average, color=color['Q'], alpha=0.8, lw=0.5, label="Stokes Q")
     ax.plot(bin_centers, U_binned_average, color=color['U'], alpha=0.8, lw=0.5, label="Stokes U")
@@ -551,6 +660,60 @@ if makeFold is True:
     ax.set_ylabel("Mean brightness (mJy)")
     ax.legend(loc=1)
     fig.savefig("Folded_EMU_light_curve.png", bbox_inches="tight")
+
+
+    # We actually only want to retain the dynamic spectral information for the two phase bins which have obviously high S/N; i.e. phases 0.51 to 0.52. There are 200 phase bins so the increment is 0.05. Index 102 seems safe to start with.
+
+    Ilc_pulse = ilc_a[np.logical_and(phase>phase_start, phase<phase_end)]
+    weights = np.tile(Ilc_pulse, (Qt.shape[1],1)).T
+    weights[weights<0] = 0.0
+# Normalise the weights to 1 as this will be useful later
+    weights /= np.nanmax(weights)
+
+    fig = plt.figure(figsize=(16,10))
+    ax = fig.add_subplot(511)
+    ax.imshow(weights, origin='lower')
+    ax2 = fig.add_subplot(512)
+    ax2.imshow(It[np.logical_and(phase>phase_start, phase<phase_end),:], origin='lower')
+    ax3 = fig.add_subplot(513)
+    ax3.imshow(Qt[np.logical_and(phase>phase_start, phase<phase_end),:], origin='lower')
+    ax4 = fig.add_subplot(514)
+    ax4.imshow(Ut[np.logical_and(phase>phase_start, phase<phase_end),:], origin='lower')
+    ax5 = fig.add_subplot(515)
+    ax5.imshow(Vt[np.logical_and(phase>phase_start, phase<phase_end),:], origin='lower')
+    fig.savefig("weights.png", bbox_inches="tight")
+    I_pulse = np.nanmean(It[np.logical_and(phase>phase_start, phase<phase_end),:]*weights, axis=0)/np.nansum(weights[:,0])
+    Q_pulse = np.nanmean(Qt[np.logical_and(phase>phase_start, phase<phase_end),:]*weights, axis=0)/np.nansum(weights[:,0])
+    U_pulse = np.nanmean(Ut[np.logical_and(phase>phase_start, phase<phase_end),:]*weights, axis=0)/np.nansum(weights[:,0])
+    V_pulse = np.nanmean(Vt[np.logical_and(phase>phase_start, phase<phase_end),:]*weights, axis=0)/np.nansum(weights[:,0])
+
+    fig = plt.figure(figsize=(8,5))
+    ax = fig.add_subplot(111)
+    ax.scatter(freqs_a, 1000*I_pulse, color=color['I'], alpha=0.8, label="I")
+    ax.axhline(np.nanmean(1000*I_pulse), color=color['I'])
+    ax.scatter(freqs_a, 1000*Q_pulse, color=color['Q'], alpha=0.8, label="Q")
+    ax.axhline(np.nanmean(1000*Q_pulse), color=color['Q'])
+    ax.scatter(freqs_a, 1000*U_pulse, color=color['U'], alpha=0.8, label="U")
+    ax.axhline(np.nanmean(1000*U_pulse), color=color['U'])
+    ax.scatter(freqs_a, 1000*V_pulse, color=color['V'], alpha=0.8, label="V")
+    ax.axhline(np.nanmean(1000*V_pulse), color=color['V'])
+    ax.set_ylabel("Weighted brightness (mJy)")
+    ax.set_xlabel("Frequency / GHz")
+    ax.legend()
+    fig.savefig("weighted_EMU_Stokes.png", bbox_inches="tight")
+
+# [freq_Hz, I_Jy, Q_Jy, U_Jy, dI_Jy, dQ_Jy, dU_Jy]
+# Errors are ... the RMS of a normal bin, divided by the sqrt of the number of bins used -- but not all were fully used, some had less than unity weight, so it goes up by the difference between the weights and unity weighting -- i.e. only goes down by np.sqrt(sum of weights), where weights are normalised to 1
+#  But sqrt makes the errors too large
+    # Just some area where we don't have signal -- use the light curve not the dynamic spectrum because that is closer to what we're calculating
+    rms = np.nanstd(np.nanmean(It[np.logical_and(phase>0.2, phase<0.3),:], axis=1))
+    # Shape of weights is (phasebin, frequency)
+    rms /= np.nansum(weights[:,0])
+    rms_arr = rms*np.ones(len(I_pulse))
+    
+    out = np.array([freqs_a[~np.isnan(I_pulse)]*1.e9, I_pulse[~np.isnan(I_pulse)], Q_pulse[~np.isnan(I_pulse)], U_pulse[~np.isnan(I_pulse)], rms_arr[~np.isnan(I_pulse)], rms_arr[~np.isnan(I_pulse)], rms_arr[~np.isnan(I_pulse)]])
+
+    np.savetxt("EMU_folded_IQU_spectrum.txt", out.T)
 
     # Fold the MeerKAT data
     # TODO: Need to solve for the polarisation calibration AND apply a parallactic angle correction before this makese sense
@@ -622,10 +785,21 @@ pulsenums = (2.5 + pulsenum(trange)).astype('int')
 minpulsenum = pulsenums[0]
 maxpulsenum = pulsenums[-1]
 
+# Now include MeerKAT data
+trange_m = times_m / (24*3600)
+phase_m = np.mod(trange_m - T0 + P, 2*P)/(2*P)
+# and half a turn of phase here, +1 to get away from +/-zero where everything gets labelled zero
+pulsenums_m = (2.5 + pulsenum(trange_m)).astype('int')
+num_extra_mkt_panels = len(np.unique(pulsenums_m))
+
+num_panels = maxpulsenum - minpulsenum + num_extra_mkt_panels
+
 ind = 1
-fig = plt.figure(figsize=(5,15))
+fig = plt.figure(figsize=(5,20))
+#Plot the EMU data
 for n in range(minpulsenum, maxpulsenum):
-    ax = fig.add_subplot(maxpulsenum-minpulsenum,1,ind)
+    print(n,ind)
+    ax = fig.add_subplot(num_panels,1,ind)
     ax.plot(phase[pulsenums==n], 1000*ilc_a[pulsenums==n], color=color["I"], alpha=0.8, label=f"{n}")
 #ax.set_ylabel("brightness (mJy/beam)")
 #ax.set_xlabel("time / s")
@@ -634,7 +808,18 @@ for n in range(minpulsenum, maxpulsenum):
     ax.axvline(0.05, alpha=0.4, color='orange')
     ax.axvline(0.52, alpha=0.8, color='orange')
     ax.legend()
-    if ind != (maxpulsenum-minpulsenum):
+    ax.tick_params(axis='x', labelbottom=False)
+    ind += 1
+# Plot the MeerKAT data
+for n in np.unique(pulsenums_m):
+    ax = fig.add_subplot(num_panels,1,ind)
+    ax.plot(phase_m[pulsenums_m==n], 1000*ilc_m[pulsenums_m==n], color='purple', alpha=0.8, label=f"{n}")
+    ax.set_ylim(-3, 20)
+    ax.set_xlim(-0.05, 1.05)
+    ax.axvline(0.05, alpha=0.4, color='orange')
+    ax.axvline(0.52, alpha=0.8, color='orange')
+    ax.legend()
+    if ind != (num_panels):
         ax.tick_params(axis='x', labelbottom=False)
     ind += 1
 ax.set_xlabel("Phase")
@@ -642,4 +827,3 @@ ax.set_xlabel("Phase")
 #ax.legend(loc=1)
 fig.savefig("Ephemeris_lightcurve.png", bbox_inches="tight")
 
-# Now include MeerKAT data
