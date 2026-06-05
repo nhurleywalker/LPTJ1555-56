@@ -15,6 +15,11 @@ debugPoly = True
 makeJointIQUV = True
 makeUpperlimits = False
 
+cm = 1/2.54  # centimeters in inches
+# Figure font size
+plt.rcParams.update({
+    "font.size": 7})
+
 T0 = 59713.512505
 P = 62.2028 / (2*24*60) # minutes into days
 
@@ -132,8 +137,16 @@ cmap = { "I" : "viridis",
 color = { "I" : "black",
          "Q" : "red",
          "U" : "blue",
-         "V" : "green" }
+         "V" : "green",
+         "L" : "orange" }
 
+# A better match to pulsar astronomy conventions
+color = { "I" : "black",
+         "Q" : "green",
+         "U" : "orange",
+         "V" : "blue",
+         "L" : "red",
+         "T" : "purple" }
 arr1 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam15_averaged_cal.leakage.pkl", allow_pickle=True)
 arr2 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam09_averaged_cal.leakage.pkl", allow_pickle=True)
 # This version has been run through FixMS, which is current ASKAP best practice
@@ -662,21 +675,51 @@ if makeFold is True:
     Q_binned_average = Q_sums / np.where(counts == 0, 1, counts)
     U_binned_average = U_sums / np.where(counts == 0, 1, counts)
     V_binned_average = V_sums / np.where(counts == 0, 1, counts)
+    L_binned_average = np.sqrt(Q_binned_average**2 + U_binned_average**2)
+    L_frac = 100*L_binned_average/I_binned_average
+    V_frac = 100*(np.abs(V_binned_average)/I_binned_average)
+    T_frac = 100*np.sqrt((Q_binned_average**2 + U_binned_average**2 + V_binned_average**2)/(I_binned_average**2))
 
-    phase_start = 0.49
-    phase_end = 0.53
-    fig = plt.figure(figsize=(8,5))
-    ax = fig.add_subplot(111)
-    ax.axvspan(phase_start, phase_end, alpha=0.3, color='m')
-    ax.plot(bin_centers, I_binned_average, color=color['I'], alpha=0.8, lw=0.5, label="Stokes I")
-    ax.plot(bin_centers, Q_binned_average, color=color['Q'], alpha=0.8, lw=0.5, label="Stokes Q")
-    ax.plot(bin_centers, U_binned_average, color=color['U'], alpha=0.8, lw=0.5, label="Stokes U")
-    ax.plot(bin_centers, V_binned_average, color=color['V'], alpha=0.8, lw=0.5, label="Stokes V")
-    ax.set_xlabel("Phase")
-    ax.set_ylabel("Mean brightness (mJy)")
-    ax.legend(loc=1)
-    fig.savefig("Folded_EMU_light_curve.png", bbox_inches="tight")
+    phase_start = 0.48
+    phase_end = 0.56
+    phase_start_ip = 0.04
+    phase_end_ip = 0.057
+# Paper figure: aim for half an A4 column (8cm)
+    fig = plt.figure(figsize=(8*cm,8*cm))
+    ax1 = fig.add_subplot(211)
+    ax1.axvspan(phase_start, phase_end, alpha=0.1, color='grey')
+    ax1.axvspan(phase_start_ip, phase_end_ip, alpha=0.1, color='grey')
+    ax1.plot(bin_centers, I_binned_average, color=color['I'], alpha=0.8, lw=0.5, label="Stokes I")
+    ax1.plot(bin_centers, Q_binned_average, color=color['Q'], alpha=0.8, lw=0.5, label="Stokes Q")
+    ax1.plot(bin_centers, U_binned_average, color=color['U'], alpha=0.8, lw=0.5, label="Stokes U")
+    ax1.plot(bin_centers, V_binned_average, color=color['V'], alpha=0.8, lw=0.5, label="Stokes V")
+    ax1.set_xlabel("Phase")
+    ax1.set_ylabel("Mean brightness (mJy)")
+    ax1.set_xlim(0, 1)
+    ax1.legend(loc=1)
+    ax2 = fig.add_subplot(212)
+    ax2.axvspan(phase_start, phase_end, alpha=0.1, color='grey')
+    ax2.axvspan(phase_start_ip, phase_end_ip, alpha=0.1, color='grey')
 
+    I_cut = 0.5 #mJy
+  # Main pulse
+    ind1 = np.logical_and(np.abs(I_binned_average)>I_cut, np.logical_and(bin_centers > phase_start, bin_centers < phase_end))
+  # Little circularly polarised pulse
+    ind2 = np.logical_and(np.abs(I_binned_average)>I_cut, np.logical_and(bin_centers > phase_start_ip, bin_centers < phase_end_ip))
+    ax2.plot(bin_centers[ind1], L_frac[ind1], color=color['L'], alpha=0.8, lw=0.5, label="Linear")
+    ax2.plot(bin_centers[ind1], V_frac[ind1], color=color['V'], alpha=0.8, lw=0.5, label="Circular")
+    ax2.plot(bin_centers[ind1], T_frac[ind1], color=color['T'], alpha=0.8, lw=0.5, label="Total")
+    ax2.plot(bin_centers[ind2], L_frac[ind2], color=color['L'], alpha=0.8, lw=0.5)
+    ax2.plot(bin_centers[ind2], V_frac[ind2], color=color['V'], alpha=0.8, lw=0.5)
+    ax2.plot(bin_centers[ind2], T_frac[ind2], color=color['T'], alpha=0.8, lw=0.5)
+    ax2.set_xlabel("Phase")
+    ax2.set_ylim(0, 120)
+    ax2.set_xlim(0, 1)
+    ax2.set_ylabel("$|$Fractional$|$ polarisation (%)")
+    ax2.legend(loc=1)
+    fig.savefig("Folded_EMU_light_curve.pdf", bbox_inches="tight")
+
+    ax.plot(bin_centers, L_binned_average, color=color['L'], alpha=0.8, lw=0.5, label="Linear pol")
 
     # We actually only want to retain the dynamic spectral information for the two phase bins which have obviously high S/N; i.e. phases 0.51 to 0.52. There are 200 phase bins so the increment is 0.05. Index 102 seems safe to start with.
     # Try different phase binning to see if we can obtain a polarisation angle sweep constraint
