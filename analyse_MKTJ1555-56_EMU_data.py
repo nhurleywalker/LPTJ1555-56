@@ -12,12 +12,13 @@ import sys
 makeDynspec = False
 makeLightcurves = False
 makePaperDS = False
-makeFold = True
-makeRM = True
+makeFold = False
+# NB: if you want to makeRM or makePhaseBin, you must also makeFold
+makeRM = False
 makePhaseBin = False
 debugPoly = False
-makeJointIQUV = True
-makeUpperlimits = False
+makeJointIQUV = False
+makeUpperlimits = True
 
 cm = 1/2.54  # centimeters in inches
 # Figure font size
@@ -50,6 +51,14 @@ def ipulsenum(mjd):
 def nicedate(t = None):
     ''' take a Time object and return a pleasantly formatted ISO string without excess precision on the seconds '''
     return "{0}-{1:02.0f}-{2:02.0f} {3:02.0f}:{4:02.0f}:{5:02.0f}".format(t.ymdhms[0], t.ymdhms[1], t.ymdhms[2], t.ymdhms[3], t.ymdhms[4], t.ymdhms[5])
+
+def justdate(t = None):
+    ''' take a Time object and return just the date '''
+    return "{0}-{1:02.0f}-{2:02.0f}".format(t.ymdhms[0], t.ymdhms[1], t.ymdhms[2])
+
+def hhmm(t = None):
+    ''' take a Time object and return just the time with no seconds '''
+    return "{0:02.0f}:{1:02.0f}".format(t.ymdhms[3], t.ymdhms[4])
 
 def make_dynspec(data, vmin, vmax, cmap, extent, outname, imwidth=13):
     fig = plt.figure(figsize=(imwidth,5))
@@ -371,84 +380,84 @@ if makeLightcurves is True:
     make_lightcurve(times_az, 1000*vlc3_a, vmin, vmax, 0.5, color["V"], 1.0, 'Stokes V', 'EMU_beam09_StokesV_fixms_light_curve.png', offset=times_a[0])
     make_lightcurve(times_az, 1000*vlc4_a, vmin, vmax, 0.5, color["V"], 1.0, 'Stokes V', 'EMU_beam15_StokesV_fixms_light_curve.png', offset=times_a[0])
 
-#if makePaperDS:
-# This will be a full-page plot
-fig = plt.figure(figsize=(17.9*cm, 8*cm))
-extent = [0, times_az[-1]/3600, freqs_a[16], freqs_a[-1]]
-# Top-left, Stokes I
-lw = 0.5
-alpha = 0.8
-vmin, vmax = -3, 20
-ax_I_ds = fig.add_axes([0.1, 0.53, 0.3, 0.3])
-cax_I = fig.add_axes([0.41, 0.53, 0.015, 0.3])
-Ids = ax_I_ds.imshow(1000*It[:,16:].T, interpolation='none', origin='lower',vmin = vmin, vmax=vmax, aspect='auto', cmap=cmap["I"], extent=extent)
-fig.colorbar(Ids, cax = cax_I)
-ax_I_lc = fig.add_axes([0.1, 0.83, 0.3, 0.1])
-ax_I_lc.plot(times_az/3600, 1000*ilc_a, lw=lw, color=color["I"], alpha=alpha, label="I")
+if makePaperDS:
+    # This will be a full-page plot
+    fig = plt.figure(figsize=(17.9*cm, 8*cm))
+    extent = [0, times_az[-1]/3600, freqs_a[16], freqs_a[-1]]
+    # Top-left, Stokes I
+    lw = 0.5
+    alpha = 0.8
+    vmin, vmax = -3, 20
+    ax_I_ds = fig.add_axes([0.1, 0.53, 0.3, 0.3])
+    cax_I = fig.add_axes([0.41, 0.53, 0.015, 0.3])
+    Ids = ax_I_ds.imshow(1000*It[:,16:].T, interpolation='none', origin='lower',vmin = vmin, vmax=vmax, aspect='auto', cmap=cmap["I"], extent=extent)
+    fig.colorbar(Ids, cax = cax_I)
+    ax_I_lc = fig.add_axes([0.1, 0.83, 0.3, 0.1])
+    ax_I_lc.plot(times_az/3600, 1000*ilc_a, lw=lw, color=color["I"], alpha=alpha, label="I")
 
 
-# Define a nice diverging colormap that de-emphasises the noisy values
-base_cmap = plt.get_cmap('bwr')
-# Increase the exponent (e.g., to 3 or 4) to make it fade even slower near white
-exponent = 2.0
-num_points = 256
-x = np.linspace(-1, 1, num_points)
-# Warp the steps using a power function, then shift back to a 0-to-1 range
-# This clusters points heavily around the center (0.5), pushing colors to the edges
-warped_x = np.sign(x) * (np.abs(x) ** exponent)
-colors_sampled = base_cmap((warped_x + 1) / 2)
-# Create the new colormap from these warped colors
-slow_fade_cmap = colors.ListedColormap(colors_sampled)
-# 4. Normalize symmetrically around 0 so the center is exactly white
-max_abs = 20
-my_norm = colors.Normalize(vmin=-max_abs, vmax=max_abs)
+    # Define a nice diverging colormap that de-emphasises the noisy values
+    base_cmap = plt.get_cmap('bwr')
+    # Increase the exponent (e.g., to 3 or 4) to make it fade even slower near white
+    exponent = 2.0
+    num_points = 256
+    x = np.linspace(-1, 1, num_points)
+    # Warp the steps using a power function, then shift back to a 0-to-1 range
+    # This clusters points heavily around the center (0.5), pushing colors to the edges
+    warped_x = np.sign(x) * (np.abs(x) ** exponent)
+    colors_sampled = base_cmap((warped_x + 1) / 2)
+    # Create the new colormap from these warped colors
+    slow_fade_cmap = colors.ListedColormap(colors_sampled)
+    # 4. Normalize symmetrically around 0 so the center is exactly white
+    max_abs = 20
+    my_norm = colors.Normalize(vmin=-max_abs, vmax=max_abs)
 
-# Top-right, Stokes Q
-ax_Q_ds = fig.add_axes([0.5, 0.53, 0.3, 0.3])
-cax_Q = fig.add_axes([0.81, 0.53, 0.015, 0.3])
-Qds = ax_Q_ds.imshow(1000*Qt[:,16:].T, interpolation='none', origin='lower', aspect='auto', extent=extent, cmap=slow_fade_cmap, norm=my_norm)
-fig.colorbar(Qds, cax = cax_Q, label='Flux density / mJy')
-ax_Q_lc = fig.add_axes([0.5, 0.83, 0.3, 0.1])
-ax_Q_lc.plot(times_az/3600, 1000*qlc_a, lw=lw, color=color["Q"], alpha=alpha, label="Q")
-# Bottom-left, Stokes U
-ax_U_ds = fig.add_axes([0.1, 0.1, 0.3, 0.3])
-cax_U = fig.add_axes([0.41, 0.1, 0.015, 0.3])
-Uds = ax_U_ds.imshow(1000*Ut[:,16:].T, interpolation='none', origin='lower', aspect='auto', extent=extent, cmap=slow_fade_cmap, norm=my_norm)
-fig.colorbar(Uds, cax = cax_U)
-ax_U_lc = fig.add_axes([0.1, 0.4, 0.3, 0.1])
-ax_U_lc.plot(times_az/3600, 1000*ulc_a, lw=lw, color=color["U"], alpha=alpha, label="U")
-# Bottom-right, Stokes V
-ax_V_ds = fig.add_axes([0.5, 0.1, 0.3, 0.3])
-cax_V = fig.add_axes([0.81, 0.1, 0.015, 0.3])
-Vds = ax_V_ds.imshow(1000*Vt[:,16:].T, interpolation='none', origin='lower', aspect='auto', extent=extent, cmap=slow_fade_cmap, norm=my_norm)
-fig.colorbar(Vds, cax = cax_V, label='Flux density / mJy')
-ax_V_lc = fig.add_axes([0.5, 0.4, 0.3, 0.1])
-ax_V_lc.plot(times_az/3600, 1000*vlc_a, lw=lw, color=color["V"], alpha=alpha, label="V")
+    # Top-right, Stokes Q
+    ax_Q_ds = fig.add_axes([0.5, 0.53, 0.3, 0.3])
+    cax_Q = fig.add_axes([0.81, 0.53, 0.015, 0.3])
+    Qds = ax_Q_ds.imshow(1000*Qt[:,16:].T, interpolation='none', origin='lower', aspect='auto', extent=extent, cmap=slow_fade_cmap, norm=my_norm)
+    fig.colorbar(Qds, cax = cax_Q, label='Flux density / mJy')
+    ax_Q_lc = fig.add_axes([0.5, 0.83, 0.3, 0.1])
+    ax_Q_lc.plot(times_az/3600, 1000*qlc_a, lw=lw, color=color["Q"], alpha=alpha, label="Q")
+    # Bottom-left, Stokes U
+    ax_U_ds = fig.add_axes([0.1, 0.1, 0.3, 0.3])
+    cax_U = fig.add_axes([0.41, 0.1, 0.015, 0.3])
+    Uds = ax_U_ds.imshow(1000*Ut[:,16:].T, interpolation='none', origin='lower', aspect='auto', extent=extent, cmap=slow_fade_cmap, norm=my_norm)
+    fig.colorbar(Uds, cax = cax_U)
+    ax_U_lc = fig.add_axes([0.1, 0.4, 0.3, 0.1])
+    ax_U_lc.plot(times_az/3600, 1000*ulc_a, lw=lw, color=color["U"], alpha=alpha, label="U")
+    # Bottom-right, Stokes V
+    ax_V_ds = fig.add_axes([0.5, 0.1, 0.3, 0.3])
+    cax_V = fig.add_axes([0.81, 0.1, 0.015, 0.3])
+    Vds = ax_V_ds.imshow(1000*Vt[:,16:].T, interpolation='none', origin='lower', aspect='auto', extent=extent, cmap=slow_fade_cmap, norm=my_norm)
+    fig.colorbar(Vds, cax = cax_V, label='Flux density / mJy')
+    ax_V_lc = fig.add_axes([0.5, 0.4, 0.3, 0.1])
+    ax_V_lc.plot(times_az/3600, 1000*vlc_a, lw=lw, color=color["V"], alpha=alpha, label="V")
 
-offset = times_a[0]
-for ax in [ax_I_lc, ax_Q_lc, ax_U_lc, ax_V_lc]:
-    ax.set_xlim(times_az[0]/3600, times_az[-1]/3600)
-    ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left")
-    for i in range(-3, 35):
-        ax.axvline((ephem(i)*24*3600 - offset)/3600, alpha=0.1, color='grey')
-for ax in [ax_I_ds, ax_U_ds]:
-    ax.set_ylabel("Frequency / GHz")
+    offset = times_a[0]
+    for ax in [ax_I_lc, ax_Q_lc, ax_U_lc, ax_V_lc]:
+        ax.set_xlim(times_az[0]/3600, times_az[-1]/3600)
+        ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left")
+        for i in range(-3, 35):
+            ax.axvline((ephem(i)*24*3600 - offset)/3600, alpha=0.1, color='grey')
+    for ax in [ax_I_ds, ax_U_ds]:
+        ax.set_ylabel("Frequency / GHz")
 
-for ax in [ax_I_lc, ax_U_lc]:
-    ax.set_ylabel("$S$ / mJy")
+    for ax in [ax_I_lc, ax_U_lc]:
+        ax.set_ylabel("$S$ / mJy")
 
-tstart = nicedate(Time(times_a[0]/(24*3600), format='mjd', scale='utc'))
-for ax in [ax_U_ds, ax_V_ds]:
-    ax.set_xlabel(f"Time / hours since {tstart}")
+    tstart = nicedate(Time(times_a[0]/(24*3600), format='mjd', scale='utc'))
+    for ax in [ax_U_ds, ax_V_ds]:
+        ax.set_xlabel(f"Time / hours since {tstart}")
 
-for ax in [ax_Q_ds, ax_Q_lc, ax_I_ds, ax_I_lc, ax_U_lc, ax_V_lc]:
-    ax.set_xticklabels([])
+    for ax in [ax_Q_ds, ax_Q_lc, ax_I_ds, ax_I_lc, ax_U_lc, ax_V_lc]:
+        ax.set_xticklabels([])
 
-for ax in [ax_Q_ds, ax_V_ds]:
-    ax.set_yticklabels([])
+    for ax in [ax_Q_ds, ax_V_ds]:
+        ax.set_yticklabels([])
 
 
-fig.savefig("ASKAP_dynamic_spectra_lcs.pdf", bbox_inches="tight", dpi=300)
+    fig.savefig("ASKAP_dynamic_spectra_lcs.pdf", bbox_inches="tight", dpi=300)
 
 
 # MeerKAT data - basic transforms
@@ -463,13 +472,10 @@ Qt_m = np.real((-mkt["DS"][:,:,XY]-mkt["DS"][:,:,YX]))/2
 Ut_m = np.real((mkt["DS"][:,:,XX]-mkt["DS"][:,:,YY]))/2
 Vt_m = np.real((-1j*mkt["DS"][:,:,XY]+1j*mkt["DS"][:,:,YX]))/2
 
-# Original high-resolution data -- hopefully we will use this again one day
+# Original high-resolution data -- hopefully we will get a polarisation-calibrated version some day
 indstart = 460
 indend = 505
 i = 22
-# Guess at new values for data averaged by a factor of 4 and missing a few timesteps
-indstart = 111
-indend = 122
 if makeDynspec is True:
     # Form individual Stokes dynamic spectra
     vmin, vmax = -0.005, 0.03
@@ -492,17 +498,17 @@ qlc_m = np.nanmean(Qt_m, axis=1)
 ulc_m = np.nanmean(Ut_m, axis=1)
 vlc_m = np.nanmean(Vt_m, axis=1)
 
-## Sanity check
-fig = plt.figure(figsize=(8,5))
-ax = fig.add_axes([0.1, 0.1, 0.8, 0.9])
-#cax = fig.add_axes([0.92, 0.1, 0.05, 0.9])
-#img = ax.imshow(pb_corr_3.T, origin='lower', aspect='auto')
-ax.plot(times_m, label='From SDP')
-ax.plot(times_m2, label='From Bill')
-ax.set_xlabel("index")
-ax.set_ylabel("times (MJD seconds)")
-ax.legend()
-fig.savefig("time_axis.png", bbox_inches="tight")
+### Sanity check
+#fig = plt.figure(figsize=(8,5))
+#ax = fig.add_axes([0.1, 0.1, 0.8, 0.9])
+##cax = fig.add_axes([0.92, 0.1, 0.05, 0.9])
+##img = ax.imshow(pb_corr_3.T, origin='lower', aspect='auto')
+#ax.plot(times_m, label='From SDP')
+#ax.plot(times_m2, label='From Bill')
+#ax.set_xlabel("index")
+#ax.set_ylabel("times (MJD seconds)")
+#ax.legend()
+#fig.savefig("time_axis.png", bbox_inches="tight")
 
 
 # MeerKAT Stokes I has a slow ripple to it that needs fixing
@@ -977,11 +983,27 @@ if makeUpperlimits is True:
     pkls = sorted(glob.glob("dynspec/*RACS*pkl") + glob.glob("dynspec/*VAST*pkl") + glob.glob("dynspec/*SB43773*pkl") + glob.glob("dynspec/*SB33284*pkl"))
 
     mjds = []
+    sbids = []
     rmss = []
+    freqs = []
+    obslengths = [] # in minutes
+    beams = []
     for pkl in pkls:
         arr = np.load(pkl, allow_pickle=True)
-        mjds.append(arr["TIMES"][int(len(arr["TIMES"])/2)]/(24*3600))
+        freqs.append(arr["FREQS"][int(len(arr["FREQS"])/2)]/1.e6)
+        sbids.append(pkl.split("SB")[1][0:5].replace("_",""))
+        beams.append(pkl.split("beam")[1][0:2])
+# For center of observation
+#        mjds.append(arr["TIMES"][int(len(arr["TIMES"])/2)]/(24*3600))
+# For start of observation
+        mjds.append(arr["TIMES"][0]/(24*3600))
+        obslengths.append((arr["TIMES"][-1]-arr["TIMES"][0])/60) # Because they want it in minutes
         rmss.append(np.nanstd(np.nanmean(np.real((arr["DS"][:,:,XX]+arr["DS"][:,:,YY])),axis=1)))
+
+# TODO Combine beams at the point where you're measuring the RMS, not just later for the table
+    sbids = np.array(sbids)
+# Cut down to unique SBIDs and combine beams
+#    uniq_sbids = np.unique(sbids)
 
     fig = plt.figure(figsize=(8,5))
     ax = fig.add_subplot(111)
@@ -992,6 +1014,30 @@ if makeUpperlimits is True:
     ax.errorbar(T0, 17., yerr=1, color='red')
     ax.legend(loc=1)
     fig.savefig("Non-detections_ASKAP.png", bbox_inches="tight")
+
+# Make a LaTeX table output for them
+    times = Time(mjds, format='mjd', scale='utc')
+    datestrs = np.array([justdate(t) for t in times])
+    hhmmstrs = np.array([hhmm(t) for t in times])
+
+# Sort everything by MJD
+    ind = np.argsort(mjds)
+    datestrs = datestrs[ind]
+    hhmmstrs = hhmmstrs[ind]
+    sbids = sbids[ind]
+    beams = np.array(beams)[ind]
+    freqs = np.array(freqs)[ind]
+    obslengths = np.array(obslengths)[ind]
+
+    with open("obs_table.tex", "w") as f:
+        for i in range(0, len(datestrs)-1):
+            date, time, sbid, freq, obslength, beam = datestrs[i], hhmmstrs[i], sbids[i], freqs[i], obslengths[i], beams[i]
+# Almost every observation has two beam measurements
+# TODO fix for the one that doesn't
+            if sbid == sbids[i+1]:
+                beams_to_print = beams[i:i+2]
+                sorted_beams = beams_to_print[np.argsort(beams_to_print.astype('int'))]
+                f.write(f"{date} & {time} & ASKAP & SB{sbid} beams:{sorted_beams[0]},{sorted_beams[1]} & {freq:4.0f} & {obslength:2.0f} \\\\\n")
 
 # Look at the accuracy of the ephemeris by plotting each pulse
 
