@@ -11,6 +11,8 @@ import sys
 makeDynspec = True
 makeLightcurves = True
 makeFold = True
+makeRM = True
+makePhaseBin = True
 debugPoly = True
 makeJointIQUV = True
 makeUpperlimits = False
@@ -29,6 +31,10 @@ beams_sc = SkyCoord(["15h58m56.563 -56d53m16.761", "15h55m36.850 -56d06m49.968"]
 
 # ASKAP Aperture radius (m)
 a = 6
+
+# Phase of the main pulse 
+phase_start = 0.48
+phase_end = 0.56
 
 def ephem(n):
     return T0 + n*P
@@ -159,12 +165,13 @@ times_az = arr1["TIMES"] - arr1["TIMES"][0]
 
 mkt = np.load("dynspec/1652551867-sdp-l0_2026-05-22T14-51-05_zBI.pkl", allow_pickle=True)
 # Can't use this as it has been baseline-dependent-averaged!
-#mkt2 = np.load("dynspec/G326.31.8_Subbed.uvfits.pkl", allow_pickle=True)
+mkt2 = np.load("dynspec/G326.31.8_Subbed.uvfits.pkl", allow_pickle=True)
 #mkt = np.load("dynspec/G326.31.8_Subbed.uvfits.pkl", allow_pickle=True)
 print(mkt["DS"].shape)
 
 freqs_m = mkt["FREQS"]/1.e9
 times_m = mkt["TIMES"]
+times_m2 = mkt2["TIMES"]
 times_mz = mkt["TIMES"] - mkt["TIMES"][0]
 
 # ASKAP data correct transforms -- if data has not been modified by FixMS
@@ -366,9 +373,13 @@ Vt_m = np.real((-1j*mkt["DS"][:,:,XY]+1j*mkt["DS"][:,:,YX]))/2
 
 print(It_m.shape)
 
+# Original high-resolution data -- hopefully we will use this again one day
 indstart = 460
 indend = 505
 i = 22
+# Guess at new values for data averaged by a factor of 4 and missing a few timesteps
+indstart = 111
+indend = 122
 if makeDynspec is True:
     # Form individual Stokes dynamic spectra
     vmin, vmax = -0.005, 0.03
@@ -392,16 +403,16 @@ ulc_m = np.nanmean(Ut_m, axis=1)
 vlc_m = np.nanmean(Vt_m, axis=1)
 
 ## Sanity check
-#fig = plt.figure(figsize=(8,5))
-#ax = fig.add_axes([0.1, 0.1, 0.8, 0.9])
-##cax = fig.add_axes([0.92, 0.1, 0.05, 0.9])
-##img = ax.imshow(pb_corr_3.T, origin='lower', aspect='auto')
-#ax.plot(times_m, label='From SDP')
-#ax.plot(times_m2, label='From Bill')
-#ax.set_xlabel("index")
-#ax.set_ylabel("times (MJD seconds)")
-#ax.legend()
-#fig.savefig("time_axis.png", bbox_inches="tight")
+fig = plt.figure(figsize=(8,5))
+ax = fig.add_axes([0.1, 0.1, 0.8, 0.9])
+#cax = fig.add_axes([0.92, 0.1, 0.05, 0.9])
+#img = ax.imshow(pb_corr_3.T, origin='lower', aspect='auto')
+ax.plot(times_m, label='From SDP')
+ax.plot(times_m2, label='From Bill')
+ax.set_xlabel("index")
+ax.set_ylabel("times (MJD seconds)")
+ax.legend()
+fig.savefig("time_axis.png", bbox_inches="tight")
 
 
 # MeerKAT Stokes I has a slow ripple to it that needs fixing
@@ -680,8 +691,6 @@ if makeFold is True:
     V_frac = 100*(np.abs(V_binned_average)/I_binned_average)
     T_frac = 100*np.sqrt((Q_binned_average**2 + U_binned_average**2 + V_binned_average**2)/(I_binned_average**2))
 
-    phase_start = 0.48
-    phase_end = 0.56
     phase_start_ip = 0.04
     phase_end_ip = 0.057
 # Paper figure: aim for half an A4 column (8cm)
@@ -719,64 +728,116 @@ if makeFold is True:
     ax2.legend(loc=1)
     fig.savefig("Folded_EMU_light_curve.pdf", bbox_inches="tight")
 
-    ax.plot(bin_centers, L_binned_average, color=color['L'], alpha=0.8, lw=0.5, label="Linear pol")
+    if makeRM is True:
+# Try to fit the RM from the highest S/N phase bins in the EMU data
+        ind = np.logical_and(phase>phase_start, phase<phase_end)
+        Ilc_pulse = ilc_a[ind]
+   
+        #Sanity check
+        fig = plt.figure(figsize=(5,5))
+        ax = fig.add_subplot(111)
+        ax.scatter(phase[ind], Ilc_pulse)
+        ax.set_xlabel("Phase")
+        ax.set_ylabel("Stokes I light curve just of main pulse")
+        fig.savefig("test_pulse_capture.png", bbox_inches="tight")
 
-    # We actually only want to retain the dynamic spectral information for the two phase bins which have obviously high S/N; i.e. phases 0.51 to 0.52. There are 200 phase bins so the increment is 0.05. Index 102 seems safe to start with.
-    # Try different phase binning to see if we can obtain a polarisation angle sweep constraint
-    step = 0.01
-    phase_starts = np.arange(0.48, 0.53, step)
-    for phase_start in phase_starts:
-        phase_end = phase_start + step
-        Ilc_pulse = ilc_a[np.logical_and(phase>phase_start, phase<phase_end)]
         weights = np.tile(Ilc_pulse, (Qt.shape[1],1)).T
-        weights[weights<0] = 0.0
+        weights[weights<0] = 0.
     # Normalise the weights to 1 as this will be useful later
         weights /= np.nanmax(weights)
+        print(np.nanmin(weights),np.nanmax(weights))
 
-#        fig = plt.figure(figsize=(16,10))
-#        ax = fig.add_subplot(511)
-#        ax.imshow(weights, origin='lower')
-#        ax2 = fig.add_subplot(512)
-#        ax2.imshow(It[np.logical_and(phase>phase_start, phase<phase_end),:], origin='lower')
-#        ax3 = fig.add_subplot(513)
-#        ax3.imshow(Qt[np.logical_and(phase>phase_start, phase<phase_end),:], origin='lower')
-#        ax4 = fig.add_subplot(514)
-#        ax4.imshow(Ut[np.logical_and(phase>phase_start, phase<phase_end),:], origin='lower')
-#        ax5 = fig.add_subplot(515)
-#        ax5.imshow(Vt[np.logical_and(phase>phase_start, phase<phase_end),:], origin='lower')
-#        fig.savefig("weights.png", bbox_inches="tight")
-        I_pulse = np.nanmean(It[np.logical_and(phase>phase_start, phase<phase_end),:]*weights, axis=0)/np.nansum(weights[:,0])
-        Q_pulse = np.nanmean(Qt[np.logical_and(phase>phase_start, phase<phase_end),:]*weights, axis=0)/np.nansum(weights[:,0])
-        U_pulse = np.nanmean(Ut[np.logical_and(phase>phase_start, phase<phase_end),:]*weights, axis=0)/np.nansum(weights[:,0])
-        V_pulse = np.nanmean(Vt[np.logical_and(phase>phase_start, phase<phase_end),:]*weights, axis=0)/np.nansum(weights[:,0])
+        I_pulse = np.nansum(It[ind,:]*weights, axis=0)/np.nansum(weights,axis=0)
+        Q_pulse = np.nansum(Qt[ind,:]*weights, axis=0)/np.nansum(weights,axis=0)
+        U_pulse = np.nansum(Ut[ind,:]*weights, axis=0)/np.nansum(weights,axis=0)
+        V_pulse = np.nansum(Vt[ind,:]*weights, axis=0)/np.nansum(weights,axis=0)
+    # Removes RFI-flagged area
+        I_pulse[I_pulse==0.0] = np.nan
+        Q_pulse[Q_pulse==0.0] = np.nan
+        U_pulse[U_pulse==0.0] = np.nan
+        V_pulse[V_pulse==0.0] = np.nan
 
-        fig = plt.figure(figsize=(8,5))
+    # RMS is just some generic signal-free area
+        rms = np.nanstd(It[np.logical_and(phase>0.2, phase<0.3),:])
+        # Shape of weights is (phasebin, frequency)
+    # RMS drops by the sqrt of the number of samples, if everything is equally weighted
+    # But since the weights are fractional, it only drops by the sqrt of the sum of the weights
+        rms /= np.sqrt(np.nansum(weights, axis=0))
+        rms_arr = rms*np.ones(len(I_pulse))
+
+        fig = plt.figure(figsize=(8*cm,8*cm))
         ax = fig.add_subplot(111)
-        ax.scatter(freqs_a, 1000*I_pulse, color=color['I'], alpha=0.8, label="I")
-        ax.axhline(np.nanmean(1000*I_pulse), color=color['I'])
-        ax.scatter(freqs_a, 1000*Q_pulse, color=color['Q'], alpha=0.8, label="Q")
-        ax.axhline(np.nanmean(1000*Q_pulse), color=color['Q'])
-        ax.scatter(freqs_a, 1000*U_pulse, color=color['U'], alpha=0.8, label="U")
-        ax.axhline(np.nanmean(1000*U_pulse), color=color['U'])
-        ax.scatter(freqs_a, 1000*V_pulse, color=color['V'], alpha=0.8, label="V")
-        ax.axhline(np.nanmean(1000*V_pulse), color=color['V'])
+        ax.scatter(freqs_a, 1000*I_pulse, color=color['I'], alpha=0.8, marker='.', s=4, lw=0.5, zorder=10, label="Stokes I")
+        ax.errorbar(freqs_a, 1000*I_pulse, yerr=1000*rms_arr, color=color['I'], alpha=0.8, elinewidth=0.5, lw=0, zorder=5)
+        ax.axhline(np.nanmean(1000*I_pulse), color=color['I'], lw=0.5)
+        ax.scatter(freqs_a, 1000*Q_pulse, color=color['Q'], alpha=0.8, marker='.', s=4, lw=0.5, zorder=10, label="Stokes Q")
+        ax.errorbar(freqs_a, 1000*Q_pulse, yerr=1000*rms_arr, color=color['Q'], alpha=0.8, elinewidth=0.5, lw=0, zorder=5)
+        ax.axhline(np.nanmean(1000*Q_pulse), color=color['Q'], lw=0.5)
+        ax.scatter(freqs_a, 1000*U_pulse, color=color['U'], alpha=0.8, marker='.', s=4, lw=0.5, zorder=10, label="Stokes U")
+        ax.errorbar(freqs_a, 1000*U_pulse, yerr=1000*rms_arr, color=color['U'], alpha=0.8, elinewidth=0.5, lw=0, zorder=5)
+        ax.axhline(np.nanmean(1000*U_pulse), color=color['U'], lw=0.5)
+        ax.scatter(freqs_a, 1000*V_pulse, color=color['V'], alpha=0.7, marker='.', s=4, lw=0.5, zorder=11, label="Stokes V")
+        ax.errorbar(freqs_a, 1000*V_pulse, yerr=1000*rms_arr, color=color['V'], alpha=0.7, elinewidth=0.5, lw=0, zorder=6)
+        ax.axhline(np.nanmean(1000*V_pulse), color=color['V'], lw=0.5)
         ax.set_ylabel("Weighted brightness (mJy)")
         ax.set_xlabel("Frequency / GHz")
+        ax.set_ylim(-20, 20)
         ax.legend()
-        fig.savefig(f"weighted_EMU_Stokes_phasebin{phase_start}.png", bbox_inches="tight")
+        fig.savefig("EMU_weighted_Stokes_spectra.pdf", bbox_inches="tight")
+        fig.savefig("EMU_weighted_Stokes_spectra.png", bbox_inches="tight")
 
         # [freq_Hz, I_Jy, Q_Jy, U_Jy, dI_Jy, dQ_Jy, dU_Jy]
     # Errors are ... the RMS of a normal bin, divided by the sqrt of the number of bins used -- but not all were fully used, some had less than unity weight, so it goes up by the difference between the weights and unity weighting -- i.e. only goes down by np.sqrt(sum of weights), where weights are normalised to 1
     #  But sqrt makes the errors too large
-        # Just some area where we don't have signal -- use the light curve not the dynamic spectrum because that is closer to what we're calculating
-        rms = np.nanstd(np.nanmean(It[np.logical_and(phase>0.2, phase<0.3),:], axis=1))
-        # Shape of weights is (phasebin, frequency)
-        rms /= np.nansum(weights[:,0])
-        rms_arr = rms*np.ones(len(I_pulse))
+        # Just some random noise-dominated area -- use the light curve not the dynamic spectrum because that is closer to what we're calculating
         
         out = np.array([freqs_a[~np.isnan(I_pulse)]*1.e9, I_pulse[~np.isnan(I_pulse)], Q_pulse[~np.isnan(I_pulse)], U_pulse[~np.isnan(I_pulse)], rms_arr[~np.isnan(I_pulse)], rms_arr[~np.isnan(I_pulse)], rms_arr[~np.isnan(I_pulse)]])
 
-        np.savetxt(f"EMU_folded_IQU_spectrum_phasebin{phase_start}.txt", out.T)
+        np.savetxt("EMU_folded_IQU_spectrum.txt", out.T)
+
+    if makePhaseBin is True:
+        # Try different phase binning to see if we can obtain a polarisation angle sweep constraint (we can't)
+        step = 0.01
+        phase_starts = np.arange(phase_start, phase_end+step, step)
+        for phase_start in phase_starts:
+            phase_end = phase_start + step
+            ind = np.logical_and(phase>phase_start, phase<phase_end)
+            Ilc_pulse = ilc_a[ind]
+            weights = np.tile(Ilc_pulse, (Qt.shape[1],1)).T
+            weights[weights<0] = 0.0
+        # Normalise the weights to 1 as this will be useful later
+            weights /= np.nanmax(weights)
+
+            I_pulse = np.nansum(It[ind,:]*weights, axis=0)/np.nansum(weights[:,0])
+            Q_pulse = np.nansum(Qt[ind,:]*weights, axis=0)/np.nansum(weights[:,0])
+            U_pulse = np.nansum(Ut[ind,:]*weights, axis=0)/np.nansum(weights[:,0])
+            V_pulse = np.nansum(Vt[ind,:]*weights, axis=0)/np.nansum(weights[:,0])
+        # Removes RFI-flagged area
+            I_pulse[I_pulse==0.0] = np.nan
+            Q_pulse[Q_pulse==0.0] = np.nan
+            U_pulse[U_pulse==0.0] = np.nan
+            V_pulse[V_pulse==0.0] = np.nan
+
+            fig = plt.figure(figsize=(8,5))
+            ax = fig.add_subplot(111)
+            ax.scatter(freqs_a, 1000*I_pulse, color=color['I'], alpha=0.8, label="I")
+            ax.axhline(np.nanmean(1000*I_pulse), color=color['I'])
+            ax.scatter(freqs_a, 1000*Q_pulse, color=color['Q'], alpha=0.8, label="Q")
+            ax.axhline(np.nanmean(1000*Q_pulse), color=color['Q'])
+            ax.scatter(freqs_a, 1000*U_pulse, color=color['U'], alpha=0.8, label="U")
+            ax.axhline(np.nanmean(1000*U_pulse), color=color['U'])
+            ax.scatter(freqs_a, 1000*V_pulse, color=color['V'], alpha=0.8, label="V")
+            ax.axhline(np.nanmean(1000*V_pulse), color=color['V'])
+            ax.set_ylabel("Weighted brightness (mJy)")
+            ax.set_xlabel("Frequency / GHz")
+            ax.legend()
+            fig.savefig(f"weighted_EMU_Stokes_phasebin{phase_start}.png", bbox_inches="tight")
+
+  # I can reuse my rms_array from earlier
+            
+            out = np.array([freqs_a[~np.isnan(I_pulse)]*1.e9, I_pulse[~np.isnan(I_pulse)], Q_pulse[~np.isnan(I_pulse)], U_pulse[~np.isnan(I_pulse)], rms_arr[~np.isnan(I_pulse)], rms_arr[~np.isnan(I_pulse)], rms_arr[~np.isnan(I_pulse)]])
+
+            np.savetxt(f"EMU_folded_IQU_spectrum_phasebin{phase_start:1.2f}.txt", out.T)
 
     # Fold the MeerKAT data
     # TODO: Need to solve for the polarisation calibration AND apply a parallactic angle correction before this makese sense
