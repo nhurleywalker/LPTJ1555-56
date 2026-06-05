@@ -167,7 +167,6 @@ mkt = np.load("dynspec/1652551867-sdp-l0_2026-05-22T14-51-05_zBI.pkl", allow_pic
 # Can't use this as it has been baseline-dependent-averaged!
 mkt2 = np.load("dynspec/G326.31.8_Subbed.uvfits.pkl", allow_pickle=True)
 #mkt = np.load("dynspec/G326.31.8_Subbed.uvfits.pkl", allow_pickle=True)
-print(mkt["DS"].shape)
 
 freqs_m = mkt["FREQS"]/1.e9
 times_m = mkt["TIMES"]
@@ -370,8 +369,6 @@ It_m = np.real((mkt["DS"][:,:,XX]+mkt["DS"][:,:,YY]))/2
 Qt_m = np.real((-mkt["DS"][:,:,XY]-mkt["DS"][:,:,YX]))/2
 Ut_m = np.real((mkt["DS"][:,:,XX]-mkt["DS"][:,:,YY]))/2
 Vt_m = np.real((-1j*mkt["DS"][:,:,XY]+1j*mkt["DS"][:,:,YX]))/2
-
-print(It_m.shape)
 
 # Original high-resolution data -- hopefully we will use this again one day
 indstart = 460
@@ -726,6 +723,12 @@ if makeFold is True:
     ax2.set_xlim(0, 1)
     ax2.set_ylabel("$|$Fractional$|$ polarisation (%)")
     ax2.legend(loc=1)
+    n_p = times_az[-1] / (2*P*24*3600)
+    len_ip = (phase_end_ip - phase_start_ip) * 2*P *24*3600
+    len_mp = (phase_end - phase_start) * 2*P *24*3600
+    print(f"Successfully stacked {n_p:2.2f} periods, boosting S/N by {np.sqrt(n_p):2.2f}")
+    print(f"Main pulse is about {len_mp:2.0f}s wide.")
+    print(f"Inter-pulse is about {len_ip:2.0f}s wide.")
     fig.savefig("Folded_EMU_light_curve.pdf", bbox_inches="tight")
 
     if makeRM is True:
@@ -745,7 +748,6 @@ if makeFold is True:
         weights[weights<0] = 0.
     # Normalise the weights to 1 as this will be useful later
         weights /= np.nanmax(weights)
-        print(np.nanmin(weights),np.nanmax(weights))
 
         I_pulse = np.nansum(It[ind,:]*weights, axis=0)/np.nansum(weights,axis=0)
         Q_pulse = np.nansum(Qt[ind,:]*weights, axis=0)/np.nansum(weights,axis=0)
@@ -922,7 +924,6 @@ ind = 1
 fig = plt.figure(figsize=(5,20))
 #Plot the EMU data
 for n in range(minpulsenum, maxpulsenum):
-    print(n,ind)
     ax = fig.add_subplot(num_panels,1,ind)
     ax.plot(phase[pulsenums==n], 1000*ilc_a[pulsenums==n], color=color["I"], alpha=0.8, label=f"{n}")
 #ax.set_ylabel("brightness (mJy/beam)")
