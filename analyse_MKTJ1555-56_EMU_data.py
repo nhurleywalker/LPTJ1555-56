@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib import colors
 from astropy.time import Time
 from astropy.coordinates import SkyCoord
 from astropy import units as u
@@ -8,19 +9,20 @@ from astropy import units as u
 import glob
 import sys
 
-makeDynspec = True
-makeLightcurves = True
+makeDynspec = False
+makeLightcurves = False
+makePaperDS = False
 makeFold = True
 makeRM = True
-makePhaseBin = True
-debugPoly = True
+makePhaseBin = False
+debugPoly = False
 makeJointIQUV = True
 makeUpperlimits = False
 
 cm = 1/2.54  # centimeters in inches
 # Figure font size
 plt.rcParams.update({
-    "font.size": 7})
+    "font.size": 6})
 
 T0 = 59713.512505
 P = 62.2028 / (2*24*60) # minutes into days
@@ -45,6 +47,10 @@ def pulsenum(mjd):
 def ipulsenum(mjd):
     return (mjd - T0) / (P)
 
+def nicedate(t = None):
+    ''' take a Time object and return a pleasantly formatted ISO string without excess precision on the seconds '''
+    return "{0}-{1:02.0f}-{2:02.0f} {3:02.0f}:{4:02.0f}:{5:02.0f}".format(t.ymdhms[0], t.ymdhms[1], t.ymdhms[2], t.ymdhms[3], t.ymdhms[4], t.ymdhms[5])
+
 def make_dynspec(data, vmin, vmax, cmap, extent, outname, imwidth=13):
     fig = plt.figure(figsize=(imwidth,5))
     ax = fig.add_subplot(111)
@@ -66,7 +72,7 @@ def make_lightcurve(times, lc, vmin, vmax, lw, color, alpha, label, outname, off
         ax.plot(times, lc, lw=lw, color=color, alpha=alpha, label=label)
         t = times
     for i in range(-3, 35):
-        ax.axvline(ephem(i)*24*3600 - offset, alpha=0.4, color='orange')
+        ax.axvline((ephem(i)*24*3600 - offset), alpha=0.4, color='orange')
     ax.set_xlim(t[0], t[-1])
     ax.set_ylim(vmin, vmax)
     ax.legend(loc=1)
@@ -140,6 +146,12 @@ cmap = { "I" : "viridis",
          "U" : "RdBu",
          "V" : "PRGn" }
 
+# Trying to make paper plots that show things
+cmap = { "I" : "plasma",
+         "Q" : "bwr_r",
+         "U" : "bwr_r",
+         "V" : "bwr_r"}
+
 color = { "I" : "black",
          "Q" : "red",
          "U" : "blue",
@@ -152,7 +164,8 @@ color = { "I" : "black",
          "U" : "orange",
          "V" : "blue",
          "L" : "red",
-         "T" : "purple" }
+         "T" : "darkgrey" }
+
 arr1 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam15_averaged_cal.leakage.pkl", allow_pickle=True)
 arr2 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam09_averaged_cal.leakage.pkl", allow_pickle=True)
 # This version has been run through FixMS, which is current ASKAP best practice
@@ -357,6 +370,86 @@ if makeLightcurves is True:
     make_lightcurve(times_az, 1000*vlc2_a, vmin, vmax, 0.5, color["V"], 1.0, 'Stokes V', 'EMU_beam09_StokesV_light_curve.png', offset=times_a[0])
     make_lightcurve(times_az, 1000*vlc3_a, vmin, vmax, 0.5, color["V"], 1.0, 'Stokes V', 'EMU_beam09_StokesV_fixms_light_curve.png', offset=times_a[0])
     make_lightcurve(times_az, 1000*vlc4_a, vmin, vmax, 0.5, color["V"], 1.0, 'Stokes V', 'EMU_beam15_StokesV_fixms_light_curve.png', offset=times_a[0])
+
+#if makePaperDS:
+# This will be a full-page plot
+fig = plt.figure(figsize=(17.9*cm, 8*cm))
+extent = [0, times_az[-1]/3600, freqs_a[16], freqs_a[-1]]
+# Top-left, Stokes I
+lw = 0.5
+alpha = 0.8
+vmin, vmax = -3, 20
+ax_I_ds = fig.add_axes([0.1, 0.53, 0.3, 0.3])
+cax_I = fig.add_axes([0.41, 0.53, 0.015, 0.3])
+Ids = ax_I_ds.imshow(1000*It[:,16:].T, interpolation='none', origin='lower',vmin = vmin, vmax=vmax, aspect='auto', cmap=cmap["I"], extent=extent)
+fig.colorbar(Ids, cax = cax_I)
+ax_I_lc = fig.add_axes([0.1, 0.83, 0.3, 0.1])
+ax_I_lc.plot(times_az/3600, 1000*ilc_a, lw=lw, color=color["I"], alpha=alpha, label="I")
+
+
+# Define a nice diverging colormap that de-emphasises the noisy values
+base_cmap = plt.get_cmap('bwr')
+# Increase the exponent (e.g., to 3 or 4) to make it fade even slower near white
+exponent = 2.0
+num_points = 256
+x = np.linspace(-1, 1, num_points)
+# Warp the steps using a power function, then shift back to a 0-to-1 range
+# This clusters points heavily around the center (0.5), pushing colors to the edges
+warped_x = np.sign(x) * (np.abs(x) ** exponent)
+colors_sampled = base_cmap((warped_x + 1) / 2)
+# Create the new colormap from these warped colors
+slow_fade_cmap = colors.ListedColormap(colors_sampled)
+# 4. Normalize symmetrically around 0 so the center is exactly white
+max_abs = 20
+my_norm = colors.Normalize(vmin=-max_abs, vmax=max_abs)
+
+# Top-right, Stokes Q
+ax_Q_ds = fig.add_axes([0.5, 0.53, 0.3, 0.3])
+cax_Q = fig.add_axes([0.81, 0.53, 0.015, 0.3])
+Qds = ax_Q_ds.imshow(1000*Qt[:,16:].T, interpolation='none', origin='lower', aspect='auto', extent=extent, cmap=slow_fade_cmap, norm=my_norm)
+fig.colorbar(Qds, cax = cax_Q, label='Flux density / mJy')
+ax_Q_lc = fig.add_axes([0.5, 0.83, 0.3, 0.1])
+ax_Q_lc.plot(times_az/3600, 1000*qlc_a, lw=lw, color=color["Q"], alpha=alpha, label="Q")
+# Bottom-left, Stokes U
+ax_U_ds = fig.add_axes([0.1, 0.1, 0.3, 0.3])
+cax_U = fig.add_axes([0.41, 0.1, 0.015, 0.3])
+Uds = ax_U_ds.imshow(1000*Ut[:,16:].T, interpolation='none', origin='lower', aspect='auto', extent=extent, cmap=slow_fade_cmap, norm=my_norm)
+fig.colorbar(Uds, cax = cax_U)
+ax_U_lc = fig.add_axes([0.1, 0.4, 0.3, 0.1])
+ax_U_lc.plot(times_az/3600, 1000*ulc_a, lw=lw, color=color["U"], alpha=alpha, label="U")
+# Bottom-right, Stokes V
+ax_V_ds = fig.add_axes([0.5, 0.1, 0.3, 0.3])
+cax_V = fig.add_axes([0.81, 0.1, 0.015, 0.3])
+Vds = ax_V_ds.imshow(1000*Vt[:,16:].T, interpolation='none', origin='lower', aspect='auto', extent=extent, cmap=slow_fade_cmap, norm=my_norm)
+fig.colorbar(Vds, cax = cax_V, label='Flux density / mJy')
+ax_V_lc = fig.add_axes([0.5, 0.4, 0.3, 0.1])
+ax_V_lc.plot(times_az/3600, 1000*vlc_a, lw=lw, color=color["V"], alpha=alpha, label="V")
+
+offset = times_a[0]
+for ax in [ax_I_lc, ax_Q_lc, ax_U_lc, ax_V_lc]:
+    ax.set_xlim(times_az[0]/3600, times_az[-1]/3600)
+    ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left")
+    for i in range(-3, 35):
+        ax.axvline((ephem(i)*24*3600 - offset)/3600, alpha=0.1, color='grey')
+for ax in [ax_I_ds, ax_U_ds]:
+    ax.set_ylabel("Frequency / GHz")
+
+for ax in [ax_I_lc, ax_U_lc]:
+    ax.set_ylabel("$S$ / mJy")
+
+tstart = nicedate(Time(times_a[0]/(24*3600), format='mjd', scale='utc'))
+for ax in [ax_U_ds, ax_V_ds]:
+    ax.set_xlabel(f"Time / hours since {tstart}")
+
+for ax in [ax_Q_ds, ax_Q_lc, ax_I_ds, ax_I_lc, ax_U_lc, ax_V_lc]:
+    ax.set_xticklabels([])
+
+for ax in [ax_Q_ds, ax_V_ds]:
+    ax.set_yticklabels([])
+
+
+fig.savefig("ASKAP_dynamic_spectra_lcs.pdf", bbox_inches="tight", dpi=300)
+
 
 # MeerKAT data - basic transforms
 #It_m = np.real((mkt["DS"][:,:,XX]+mkt["DS"][:,:,YY]))/2
@@ -632,7 +725,7 @@ if makeJointIQUV is True:
     ax = fig.add_subplot(111)
     ax.set_ylabel("brightness (mJy/beam)")
     ax.set_xlabel("time / s")
-    ax.plot(times_a, 1000*ilc_a, lw=2, color='darkgrey', alpha=0.5, label="ASKAP Stokes I")
+    ax.plot(times_a, 1000*ilc_a, lw=2, color='darkgrey', alpha=0.8, label="ASKAP Stokes I")
     ax.plot(times_m, 1000*ilc_m, lw=0.5, color='black', alpha=0.8, label="MeerKAT Stokes I")
     for i in range(-3, 30):
         ax.axvline(ephem(i)*24*3600, alpha=0.4, color='orange')
