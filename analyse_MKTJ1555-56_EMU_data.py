@@ -9,7 +9,7 @@ from astropy import units as u
 import glob
 import sys
 
-makeDynspec = False
+makeDynspec = True
 makeLightcurves = False
 makePaperDS = False
 makeFold = False
@@ -19,6 +19,7 @@ makePhaseBin = False
 debugPoly = False
 makeJointIQUV = False
 makeUpperlimits = True
+tryBandSplit = False
 
 cm = 1/2.54  # centimeters in inches
 # Figure font size
@@ -474,7 +475,7 @@ Vt_m = np.real((-1j*mkt["DS"][:,:,XY]+1j*mkt["DS"][:,:,YX]))/2
 
 # Original high-resolution data -- hopefully we will get a polarisation-calibrated version some day
 indstart = 460
-indend = 505
+indend = 510
 i = 22
 if makeDynspec is True:
     # Form individual Stokes dynamic spectra
@@ -491,6 +492,48 @@ if makeDynspec is True:
     make_dynspec(Qt_m[indstart:indend].T, vmin, vmax, cmap["Q"], [times_mz[indstart], times_mz[indend], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesQ_dynspec_zoom.png", imwidth=5)
     make_dynspec(Ut_m[indstart:indend].T, vmin, vmax, cmap["U"], [times_mz[indstart], times_mz[indend], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesU_dynspec_zoom.png", imwidth=5)
     make_dynspec(Vt_m[indstart:indend].T, vmin, vmax, cmap["V"], [times_mz[indstart], times_mz[indend], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesV_dynspec_zoom.png", imwidth=5)
+
+
+if tryBandSplit is True:
+# Clean up baseline
+    bkg = np.tile(np.nanmean(It_m[indstart:indend], axis=0), (indend-indstart, 1))
+    vmin, vmax = -0.03, 0.030
+    make_dynspec((It_m[indstart:indend]-bkg).T, vmin, vmax, cmap["I"], [times_mz[indstart], times_mz[indend], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesI_dynspec_zoom.png", imwidth=5)
+
+# split the data 0.95 - 1.15 GHz
+    find1 = 80
+    find2 = 300
+# and 1.3 to 1.55 GHz
+    find3 = 450
+    find4 = 850
+
+    ilc_low = np.nanmean(It_m[indstart:indend,find1:find2]-bkg[:,find1:find2], axis=1)
+    ilc_high = np.nanmean(It_m[indstart:indend,find3:find4]-bkg[:,find3:find4], axis=1)
+# STILL have to do some background-subtraction
+    deg = 1
+    edge = 8
+    t_fit = np.hstack([times_mz[indstart:indend][:edge],times_mz[indstart:indend][-edge:]])
+    y_fit_low = np.hstack([ilc_low[:edge],ilc_low[-edge:]])
+    p_low = np.polynomial.Polynomial.fit(t_fit, y_fit_low, deg=deg)
+    y_fit_high = np.hstack([ilc_high[:edge],ilc_high[-edge:]])
+    p_high = np.polynomial.Polynomial.fit(t_fit, y_fit_high, deg=deg)
+    # Normalise the data
+    ilc_low_norm = ilc_low-p_low(times_mz[indstart:indend])
+    ilc_low_norm = ilc_low_norm / np.nanmax(ilc_low_norm)
+    ilc_high_norm = ilc_high-p_high(times_mz[indstart:indend])
+    ilc_high_norm = ilc_high_norm / np.nanmax(ilc_high_norm)
+ # Over plot the two light curves and their residual
+    fig = plt.figure(figsize=(5,8))
+    ax = fig.add_subplot(211)
+    ax.set_ylabel("brightness (mJy/beam)")
+    ax.plot(times_mz[indstart:indend], ilc_low_norm, lw=0.5, color='red', alpha=0.8, label='Lower band')
+    ax.plot(times_mz[indstart:indend], ilc_high_norm, lw=0.5, color='blue', alpha=0.8, label='Upper band')
+    ax.legend(loc=1)
+    axr = fig.add_subplot(212)
+    axr.set_ylabel("brightness (mJy/beam)")
+    axr.set_xlabel("time / s")
+    axr.plot(times_mz[indstart:indend], ilc_low_norm - ilc_high_norm, lw=0.5, color='black', alpha=0.8, label='Difference')
+    fig.savefig("substructure_band_comparison.png", bbox_inches="tight")
 
 # Form light curves
 ilc_m = np.nanmean(It_m, axis=1)
@@ -990,7 +1033,12 @@ if makeUpperlimits is True:
     beams = []
     for pkl in pkls:
         arr = np.load(pkl, allow_pickle=True)
-        freqs.append(arr["FREQS"][int(len(arr["FREQS"])/2)]/1.e6)
+        cent_freq = arr["FREQS"][int(len(arr["FREQS"])/2)]
+# TODO: set this up
+# What we need are the beam centers of the different SBIDs in order to evaluate how far down the beam the source is
+        #pb = GaussianPB(frequency = freq)
+        #pb_vals.append(pb.evaluate(seps[0].rad, freq=freq*1.e9))
+        freqs.append(cent_freq/1.e6)
         sbids.append(pkl.split("SB")[1][0:5].replace("_",""))
         beams.append(pkl.split("beam")[1][0:2])
 # For center of observation
@@ -1010,8 +1058,8 @@ if makeUpperlimits is True:
     ax.scatter(mjds, 1000*np.array(rmss), marker='v', color='black', label='1-sigma RMS\n(10s time resolution)')
     ax.set_xlabel("MJD")
     ax.set_ylabel("Flux density (mJy)")
-    ax.scatter(T0, 17., color='red', marker='*', label='EMU Pilot detection\n(brightest pulse)')
-    ax.errorbar(T0, 17., yerr=1, color='red')
+    ax.scatter(T0, 30, color='red', marker='*', label='EMU Pilot detection\n(brightest pulse)')
+    ax.errorbar(T0, 30., yerr=1, color='red')
     ax.legend(loc=1)
     fig.savefig("Non-detections_ASKAP.png", bbox_inches="tight")
 
