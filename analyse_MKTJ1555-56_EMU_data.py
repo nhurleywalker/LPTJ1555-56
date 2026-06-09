@@ -5,12 +5,16 @@ from matplotlib import colors
 from astropy.time import Time
 from astropy.coordinates import SkyCoord
 from astropy import units as u
+from statsmodels.graphics.tsaplots import plot_acf
+import pandas as pd
+import yaml
+
 
 import glob
 import sys
 
-makeDynspec = True
-makeLightcurves = True
+makeDynspec = False
+makeLightcurves = False
 makePaperDS = False
 makeFold = False
 # NB: if you want to makeRM or makePhaseBin, you must also makeFold
@@ -20,6 +24,7 @@ debugPoly = False
 makeJointIQUV = False
 makeUpperlimits = False
 tryBandSplit = False
+makeACF = False
 
 cm = 1/2.54  # centimeters in inches
 # Figure font size
@@ -146,6 +151,22 @@ class GaussianPB:
         y_pb = np.exp(-1.0 * self.expScaling * np.power((y_angle - self.yoff) / self.ywidth, 2.0))
 
         return x_pb * y_pb
+
+    def make_sparse(array, start=0, box=5):
+        ''' remove close-packed points '''
+        i = 0
+        keep = []
+        print(start)
+        for j in range(0, len(array)-1):
+            if array[j] > start:
+                diff = array[j+1] - array[j]
+                if diff < box:
+                    i += 1
+                else:
+                    keep.append(array[j - int(i/2) - 1])
+                    i = 0
+        return(keep)
+
 XX = 0
 XY = 1
 YX = 2
@@ -1147,4 +1168,90 @@ ax.set_xlabel("Phase")
 #ax.set_xlim(tstart, tend)
 #ax.legend(loc=1)
 fig.savefig("Ephemeris_lightcurve.png", bbox_inches="tight")
+
+
+if makeACF is True:
+    # Similar to the above, just plot the interesting pulses, and their ACFs
+    # Plotting to find out what the interesting pulses are
+    for n in range(minpulsenum, maxpulsenum):
+        fig = plt.figure(figsize=(5,5))
+        ax = fig.add_subplot(111)
+        ax.plot(phase[pulsenums==n], 1000*ilc_a[pulsenums==n], color=color["I"], alpha=0.8, lw=0.5)
+        ax.set_ylabel("brightness (mJy/beam)")
+        ax.set_xlabel("Phase")
+        ax.set_xlim(0.4, 0.6)
+        fig.savefig(f"ASKAP_pulse{n}.png", bbox_inches="tight")
+       
+    # The interesting pulses are 2, 4, and 13
+    phase_start = 0.47
+    phase_end = 0.55
+    cutoffs = [-0.2, 0.78, 0.5]
+    ts = 10 # seconds == sample time
+    fig = plt.figure(figsize=(17.9*cm,10*cm))
+    # ASKAP Pulse 2
+    ax1 = fig.add_subplot(231)
+    n = 2
+    nsec = 200
+    ind = np.logical_and(np.logical_and(phase>phase_start, phase<phase_end), pulsenums==n)
+    ax1.plot(times_az[ind], 1000*ilc_a[ind], color=color["I"], alpha=0.8, lw=0.5)
+    ax1.set_ylabel("Flux density / mJy")
+    ax1.set_xlabel("Time / s")
+    ax1.set_title("Pulse 2: ASKAP")
+    ax2 = fig.add_subplot(234)
+    acorr = np.correlate(ilc_a[ind], ilc_a[ind], 'full')[len(ilc_a[ind])-1:]
+    t = ts*np.arange(0,len(acorr),1)
+    ax2.plot(t, acorr/np.nanmax(acorr), alpha=1, lw=0.5, color="darkblue")
+    ax2.set_xlim([0, nsec/2])
+    # Find peak of auto-correlation -- excepting the 0th lag
+    peak = np.argmax(acorr[1:])
+    ax2.axvline(t[1:][peak], color='darkred', lw=0.5, alpha=0.8)
+    ax2.set_ylabel("Normalised power")
+    ax2.set_xlabel("Time / s")
+
+    # ASKAP Pulse 4
+    ax3 = fig.add_subplot(232)
+    n = 4
+    nsec = 200
+    ind = np.logical_and(np.logical_and(phase>phase_start, phase<phase_end), pulsenums==n)
+    ax3.plot(times_az[ind], 1000*ilc_a[ind], color=color["I"], alpha=0.8, lw=0.5)
+    ax3.set_xlabel("Time / s")
+    ax3.set_title("Pulse 4: ASKAP")
+    ax4 = fig.add_subplot(235)
+    acorr = np.correlate(ilc_a[ind], ilc_a[ind], 'full')[len(ilc_a[ind])-1:]
+    t = ts*np.arange(0,len(acorr),1)
+    ax4.plot(t, acorr/np.nanmax(acorr), alpha=1, lw=0.5, color="darkblue")
+    ax4.set_xlim([0, nsec/2])
+    # Find peak of auto-correlation -- excepting the 0th lag
+    peak = np.argmax(acorr[1:])
+    ax4.axvline(t[1:][peak], color='darkred', lw=0.5, alpha=0.8)
+    ax4.set_xlabel("Time / s")
+
+    # MeerKAT pulse 13
+    ts = 8 # seconds == sample time
+    ax5 = fig.add_subplot(233)
+    n = 13
+    nsec = 150
+    ind = np.logical_and(np.logical_and(np.logical_and(phase_m>phase_start, phase_m<phase_end), pulsenums_m==n), ~np.isnan(ilc_m))
+    ax5.plot(times_mz[ind], 1000*ilc_m[ind], color=color["I"], alpha=0.8, lw=0.5)
+    ax5.set_xlabel("Time / s")
+    ax5.set_title("Pulse 13: MeerKAT")
+    ax6 = fig.add_subplot(236)
+    acorr = np.correlate(ilc_m[ind], ilc_m[ind], 'full')[len(ilc_m[ind])-1:]
+    t = ts*np.arange(0,len(acorr),1)
+    ax6.plot(t, acorr/np.nanmax(acorr), alpha=1, lw=0.5, color="darkblue")
+    ax6.set_xlim([0, nsec/2])
+    # Find peak of auto-correlation -- excepting the 0th lag
+    peak = np.argmax(acorr[1:])
+    ax6.axvline(t[1:][peak], color='darkred', lw=0.5, alpha=0.8)
+    ax6.set_xlabel("Time / s")
+
+    fig.tight_layout()
+    fig.savefig("ACF.png", bbox_inches="tight")
+    fig.savefig("ACF.pdf", bbox_inches="tight")
+
+
+
+
+
+
 
