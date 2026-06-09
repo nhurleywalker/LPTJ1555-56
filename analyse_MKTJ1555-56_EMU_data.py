@@ -10,7 +10,7 @@ import glob
 import sys
 
 makeDynspec = True
-makeLightcurves = False
+makeLightcurves = True
 makePaperDS = False
 makeFold = False
 # NB: if you want to makeRM or makePhaseBin, you must also makeFold
@@ -18,7 +18,7 @@ makeRM = False
 makePhaseBin = False
 debugPoly = False
 makeJointIQUV = False
-makeUpperlimits = True
+makeUpperlimits = False
 tryBandSplit = False
 
 cm = 1/2.54  # centimeters in inches
@@ -186,6 +186,7 @@ freqs_a = arr1["FREQS"]/1.e9
 times_a = arr1["TIMES"]
 times_az = arr1["TIMES"] - arr1["TIMES"][0]
 
+#mkt = np.load("dynspec/1652551867-sdp-l0_2026-05-22T14-51-05_zBI_after_field_imaged_minbl100.pkl", allow_pickle=True)
 mkt = np.load("dynspec/1652551867-sdp-l0_2026-05-22T14-51-05_zBI.pkl", allow_pickle=True)
 # Can't use this as it has been baseline-dependent-averaged!
 mkt2 = np.load("dynspec/G326.31.8_Subbed.uvfits.pkl", allow_pickle=True)
@@ -460,6 +461,9 @@ if makePaperDS:
 
     fig.savefig("ASKAP_dynamic_spectra_lcs.pdf", bbox_inches="tight", dpi=300)
 
+# Save EMU data for Emil
+out = np.array([times_a[~np.isnan(ilc_a)]/(24*3600), ilc_a[~np.isnan(ilc_a)], np.nanstd(ilc_a)*np.ones(len(ilc_a[~np.isnan(ilc_a)]))])
+np.savetxt("ASKAP_StokesI_light_curve.txt", out.T, fmt=['%5.8f', '%0.6f', '%0.5f'])
 
 # MeerKAT data - basic transforms
 #It_m = np.real((mkt["DS"][:,:,XX]+mkt["DS"][:,:,YY]))/2
@@ -721,6 +725,11 @@ make_lightcurve([times_mz, times_mz, times_mz],
                 [1.0, 1.0, 1.0],
                 ['Stokes Q', 'Stokes U', 'Stokes V'],
                 'MeerKAT_StokesQUV_light_curve.png', offset=times_m[0])
+
+
+# Save MeerKAT data for Emil
+out = np.array([times_m[~np.isnan(ilc_m)]/(24*3600), ilc_m[~np.isnan(ilc_m)], np.nanstd(ilc_m)*np.ones(len(ilc_m[~np.isnan(ilc_m)]))])
+np.savetxt("MeerKAT_StokesI_light_curve.txt", out.T, fmt=['%5.8f', '%0.6f', '%0.5f'])
 
 # That interesting section of microstructure
 vmin, vmax = -3, 12
