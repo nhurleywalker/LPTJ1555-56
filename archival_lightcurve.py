@@ -563,14 +563,14 @@ def main():
     ax = fig.add_subplot(111)
     for ts, rms, m, c in zip(tstarts, rmss, maxs, colors):
         if m / rms > 8:
-            ax.scatter(ts, m, color=c, marker='*')
-            ax.errorbar(ts, m, yerr=rms, color=c)
+            ax.scatter(ts, m, color=c, marker='*', s=8)
+            ax.errorbar(ts, m, yerr=rms, color=c, elinewidth=0.5)
         else:
-            ax.scatter(ts, rms, marker='v', color=c)
+            ax.scatter(ts, rms, marker='v', color=c, s=8)
     ax.set_xlabel("MJD")
     ax.set_ylabel("Flux density (mJy)")
-    legend_elements = [Line2D([0], [0], lw=0, markerfacecolor='none', markeredgecolor='k', marker='v', label='1-$\sigma$ RMS'),
-                       Line2D([0], [0], lw=0, markerfacecolor='none', markeredgecolor='k', marker='*', label='Detections\n(brightest pulse)')]
+    legend_elements = [Line2D([0], [0], lw=0, markersize=4, markerfacecolor='none', markeredgecolor='k', marker='v', label='1-$\sigma$ RMS'),
+                       Line2D([0], [0], lw=0, markersize=4, markerfacecolor='none', markeredgecolor='k', marker='*', label='Detections\n(brightest pulse)')]
     ax.legend(loc=1, handles=legend_elements)
     fig.savefig("Archival_upper_limits.pdf", bbox_inches="tight")
 
