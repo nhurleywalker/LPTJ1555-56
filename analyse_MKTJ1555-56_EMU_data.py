@@ -23,7 +23,6 @@ makeRM = False
 makePhaseBin = False
 debugPoly = False
 makeJointIQUV = False
-makeUpperlimits = False
 tryBandSplit = False
 makeACF = False
 makeSpectrum = True
@@ -961,73 +960,6 @@ if makeFold is True:
     ax.set_ylabel("Mean brightness (mJy)")
     ax.legend(loc=1)
     fig.savefig("Folded_MeerKAT_light_curve.png", bbox_inches="tight")
-
-# Load the rest of the .pkl files and calculate RMS and time for non-detections plot
-
-if makeUpperlimits is True:
-    pkls = sorted(glob.glob("dynspec/*RACS*pkl") + glob.glob("dynspec/*VAST*pkl") + glob.glob("dynspec/*SB43773*pkl") + glob.glob("dynspec/*SB33284*pkl"))
-
-    mjds = []
-    sbids = []
-    rmss = []
-    freqs = []
-    obslengths = [] # in minutes
-    beams = []
-    for pkl in pkls:
-        arr = np.load(pkl, allow_pickle=True)
-        cent_freq = arr["FREQS"][int(len(arr["FREQS"])/2)]
-# TODO: set this up
-# What we need are the beam centers of the different SBIDs in order to evaluate how far down the beam the source is
-        #pb = GaussianPB(frequency = freq)
-        #pb_vals.append(pb.evaluate(seps[0].rad, freq=freq*1.e9))
-        freqs.append(cent_freq/1.e6)
-        sbids.append(pkl.split("SB")[1][0:5].replace("_",""))
-        beams.append(pkl.split("beam")[1][0:2])
-# For center of observation
-#        mjds.append(arr["TIMES"][int(len(arr["TIMES"])/2)]/(24*3600))
-# For start of observation
-        mjds.append(arr["TIMES"][0]/(24*3600))
-        obslengths.append((arr["TIMES"][-1]-arr["TIMES"][0])/60) # Because they want it in minutes
-        rmss.append(np.nanstd(np.nanmean(np.real((arr["DS"][:,:,XX]+arr["DS"][:,:,YY])),axis=1)))
-
-# TODO Combine beams at the point where you're measuring the RMS, not just later for the table
-    sbids = np.array(sbids)
-# Cut down to unique SBIDs and combine beams
-#    uniq_sbids = np.unique(sbids)
-
-    fig = plt.figure(figsize=(8,5))
-    ax = fig.add_subplot(111)
-    ax.scatter(mjds, 1000*np.array(rmss), marker='v', color='black', label='1-sigma RMS\n(10s time resolution)')
-    ax.set_xlabel("MJD")
-    ax.set_ylabel("Flux density (mJy)")
-    ax.scatter(T0, 30, color='red', marker='*', label='EMU Pilot detection\n(brightest pulse)')
-    ax.errorbar(T0, 30., yerr=1, color='red')
-    ax.legend(loc=1)
-    fig.savefig("Non-detections_ASKAP.png", bbox_inches="tight")
-
-# Make a LaTeX table output for them
-    times = Time(mjds, format='mjd', scale='utc')
-    datestrs = np.array([justdate(t) for t in times])
-    hhmmstrs = np.array([hhmm(t) for t in times])
-
-# Sort everything by MJD
-    ind = np.argsort(mjds)
-    datestrs = datestrs[ind]
-    hhmmstrs = hhmmstrs[ind]
-    sbids = sbids[ind]
-    beams = np.array(beams)[ind]
-    freqs = np.array(freqs)[ind]
-    obslengths = np.array(obslengths)[ind]
-
-    with open("obs_table.tex", "w") as f:
-        for i in range(0, len(datestrs)-1):
-            date, time, sbid, freq, obslength, beam = datestrs[i], hhmmstrs[i], sbids[i], freqs[i], obslengths[i], beams[i]
-# Almost every observation has two beam measurements
-# TODO fix for the one that doesn't
-            if sbid == sbids[i+1]:
-                beams_to_print = beams[i:i+2]
-                sorted_beams = beams_to_print[np.argsort(beams_to_print.astype('int'))]
-                f.write(f"{date} & {time} & ASKAP & SB{sbid} beams:{sorted_beams[0]},{sorted_beams[1]} & {freq:4.0f} & {obslength:2.0f} \\\\\n")
 
 # Look at the accuracy of the ephemeris by plotting each pulse
 
