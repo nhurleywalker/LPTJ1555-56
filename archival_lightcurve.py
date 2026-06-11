@@ -17,11 +17,16 @@ from astropy.time import Time, TimeDelta
 #from dstools.utils import LOCATIONS
 from matplotlib.colors import Normalize
 from matplotlib.gridspec import GridSpec
+from matplotlib.lines import Line2D
+
+from primary_beams import GaussianPB, get_beam_pos, MKCosBeam, get_beam_pos_mkt
 
 #logger = logging.getLogger(__name__)
 cm = 1/2.54
 
-FULL_WIDTH = 508 / 72.27
+# Already did it
+ASKAPPBCorr = False
+MKTPBCorr = False
 
 PARAMS = {
     "text.latex.preamble": "\\usepackage{gensymb}",
@@ -55,43 +60,46 @@ class Source:
 
 def make_light_curve(dsfile, coords):
     ''' Import a pkl file, average the frequency axis, return the times and the light curve '''
-    arr = np.load(dsfile, allow_pickle=True)
+    ds = np.load(dsfile, allow_pickle=True)
 # Barycentre times
-    telescope = arr["TELESCOPE"]
+    telescope = ds["TELESCOPE"]
     if telescope == "ASKAP":
         loc = EarthLocation.of_site('mwa')
     elif telescope == "MeerKAT":
         loc = EarthLocation.of_site('salt')
     else:
         loc = EarthLocation.of_site(telescope)
-    times = Time(arr["TIMES"]/(24*3600), scale='utc', format='mjd', location=loc)
+    times = Time(ds["TIMES"]/(24*3600), scale='utc', format='mjd', location=loc)
     bary_tt = times.light_travel_time(coords, kind="barycentric")
 
 # Do some RFI flagging
-    It = np.real(arr["DS"][:,:,0]+arr["DS"][:,:,3])/2
-    Qt = np.real((arr["DS"][:,:,0]-arr["DS"][:,:,3]))/2
+    It = np.real(ds["DS"][:,:,0]+ds["DS"][:,:,3])/2
+    Qt = np.real((ds["DS"][:,:,0]-ds["DS"][:,:,3]))/2
     spec_std = np.nanstd(Qt, axis=0)
     xrange = np.arange(0,len(spec_std))
     deg = 3
     p = np.polynomial.Polynomial.fit(xrange[~np.isnan(spec_std)], spec_std[~np.isnan(spec_std)], deg=deg)
-# One round of sigma-clipping
+# Two rounds of sigma-clipping
     std_spec_std = np.nanstd(spec_std-p(xrange))
-    ind = np.logical_and(~np.isnan(spec_std),np.abs(spec_std - p(xrange))<2*std_spec_std)
+    ind = np.logical_and(~np.isnan(spec_std),np.abs(spec_std - p(xrange))<std_spec_std)
+    p = np.polynomial.Polynomial.fit(xrange[ind], spec_std[ind], deg=deg)
+    std_spec_std = np.nanstd(spec_std-p(xrange))
+    ind = np.logical_and(~np.isnan(spec_std),np.abs(spec_std - p(xrange))<std_spec_std)
     p = np.polynomial.Polynomial.fit(xrange[ind], spec_std[ind], deg=deg)
     med_spec_std = np.nanmedian(spec_std-p(xrange))
     std_spec_std = np.nanstd(spec_std-p(xrange))
 
 # Sanity plot for RFI flagging
-#    fig = plt.figure()
-#    ax = fig.add_subplot(111)
-#    ax.plot(spec_std-p(xrange))
-#    ax.set_ylabel("standard deviation - poly offset")
-#    ax.set_xlabel("channel index")
-#    ax.axhline(med_spec_std+3*std_spec_std, color='red')
-#    stem = Path(dsfile).stem
-#    fig.savefig(f'sanity_check_{stem}.png', bbox_inches="tight")
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    ax.plot(spec_std-p(xrange))
+    ax.set_ylabel("standard deviation - poly offset")
+    ax.set_xlabel("channel index")
+    ax.axhline(med_spec_std+1.5*std_spec_std, color='red')
+    stem = Path(dsfile).stem
+    fig.savefig(f'sanity_check_{stem}.png', bbox_inches="tight")
 
-    lc = np.nanmean(It[:,(spec_std-p(xrange))<(med_spec_std+3*std_spec_std)], axis=1)
+    lc = np.nanmean(It[:,(spec_std-p(xrange))<(med_spec_std+1.5*std_spec_std)], axis=1)
 
 # Remove any time-dependent slow variation (esp. MeerKAT data)
     if telescope == "MeerKAT" and len(times)>100:
@@ -103,33 +111,7 @@ def make_light_curve(dsfile, coords):
         lc = deripple_short(times.mjd*24*3600, lc)
 
 # Convert times to barycentred and light curve to mJy
-    return times.tdb + bary_tt, 1000*lc
-
-#@dataclass
-#class Observation:
-#    path: str
-#    source: Source
-#
-#    def __post_init__(self):
-#        self.ds = DynamicSpectrum(
-#            self.path,
-#            barycentre=True,
-#        )
-#        self.t_start = Time(
-#            self.ds.header["time_start"],
-#            scale=self.ds.header["time_scale"],
-#        )
-#
-#        self.lc = LightCurve(self.ds)
-#
-#    @property
-#    def t_abs(self):
-#        return self.t_start + (self.lc.x * self.ds.tunit)
-#
-#    @property
-#    def freq(self):
-#        return self.ds.freq[0] + (self.ds.freq[-1] - self.ds.freq[0]) / 2
-
+    return times.tdb + bary_tt, 1000*lc, ds["FREQS"][int(len(ds["FREQS"])/2)]
 
 def get_source() -> Source:
     # Derived from MeerKAT observations
@@ -283,7 +265,6 @@ def plot_folded_lightcurves(
 
         # Add a y-tick at the top row of this observation, labeled by the obs start date
         ytick_pos.append(-row_step * base_row)
-        # TODO FIX
         ytick_lab.append(t[0].isot.split("T")[0])
 
         # Draw and accumulate phase errors
@@ -413,6 +394,15 @@ def deripple_long(times_m, ilc_m):
 
     return ilc_m
 
+def justdate(t = None):
+    ''' take a Time object and return just the date '''
+    return "{0}-{1:02.0f}-{2:02.0f}".format(t.ymdhms[0], t.ymdhms[1], t.ymdhms[2])
+
+def hhmm(t = None):
+    ''' take a Time object and return just the time with no seconds '''
+    return "{0:02.0f}:{1:02.0f}".format(t.ymdhms[3], t.ymdhms[4])
+
+
 @click.command()
 def main():
     #setupLogger(verbose=True)
@@ -420,50 +410,114 @@ def main():
     J1555 = get_source()
 
     # ASKAP data
-    # Pre-processing includes averaging the two beams together 
-    dynspecs = sorted(glob.glob("./dynspec/science*.pkl"))
-    sbids = np.unique(np.array([int(dsfile.split("SB")[1][0:5].replace("_","")) for dsfile in dynspecs]))
-    for sbid in sbids:
-        dynspecs = glob.glob(f"./dynspec/*SB{sbid}*pkl")
-        ds_example = np.load(dynspecs[0], allow_pickle=True)
-        final_array = np.empty((ds_example["DS"].shape[0],ds_example["DS"].shape[1],ds_example["DS"].shape[2],len(dynspecs)))
-        for i in range(0, len(dynspecs)):
-            dsfile = dynspecs[i]
-            arr = np.load(dsfile, allow_pickle=True)
-            final_array[:,:,:,i] = arr["DS"]
-        ds_example["DS"] = np.nanmean(final_array, axis=3)
-        with open(f'./averaged_dynspec/SB{sbid:05d}.pkl', 'wb') as file:
-            pickle.dump(ds_example, file)
-    dynspecs = sorted(glob.glob("./averaged_dynspec/*.pkl"))
+    # Pre-processing includes averaging the two beams together, and applying the primary beam correction
+    if ASKAPPBCorr is True:
+        dynspecs = sorted(glob.glob("./dynspec/science*.pkl"))
+        sbids = np.unique(np.array([int(dsfile.split("SB")[1][0:5].replace("_","")) for dsfile in dynspecs]))
+        for sbid in sbids:
+            dynspecs = glob.glob(f"./dynspec/*SB{sbid}*pkl")
+            ds_example = np.load(dynspecs[0], allow_pickle=True)
+            final_array = np.empty((ds_example["DS"].shape[0],ds_example["DS"].shape[1],ds_example["DS"].shape[2],len(dynspecs)))
+            weights_array = np.empty((ds_example["DS"].shape[1],len(dynspecs)))
+            for i in range(0, len(dynspecs)):
+                dsfile = dynspecs[i]
+                ds = np.load(dsfile, allow_pickle=True)
+                beam = dsfile.split("beam")[1][0:2]
+    # Survey is always after the SBID like:
+    #scienceData.VAST_1552-56.SB81799.VAST_1552-56.beam01_averaged_cal.leakage.pkl
+    #scienceData_SB8676_RACS_1552-56A.beam01_averaged_cal.pkl
+    # But sometimes it's an underscore and sometimes a full stop -- so replace at the critical point
+                survey = dsfile.split("SB")[1].replace("_", ".").split(".")[1]
+    # TODO find beam values for POSSUM
+                if survey != "POSSUM":
+    # Apply frequency-dependent primary beam 
+                    pb_vals = []
+# TODO improve efficiency
+                    for freq in ds["FREQS"]:
+                        pb = GaussianPB(frequency = freq*1.e9)
+                        sep = get_beam_pos(survey, beam).separation(J1555.coord)
+                        pb_vals.append(pb.evaluate(sep.rad, freq=freq))
+        # This is just frequencies for each dynamic spectrum
+                    weights_array[:,i] = np.array(pb_vals) 
+                else:
+                    weights_array[:,i] = 0.5*np.ones(weights_array.shape[0])
+                final_array[:,:,:,i] = ds["DS"]
+    # Correcting for the primary beam means multiplying by the primary beam correction (which is inversely proportional to distance to the phase centre)
+    # Weighting by the primary beam means dividing by the primary beam correction (as big numbers are bad!)
+    # So, effectively, those terms cancel out, and at the end we want to simply divide by the sum of the weights
 
+            ds_example["DS"][:,:,:] = np.nansum(final_array, axis=3) / np.nansum(np.tile(weights_array[None, :, None, :], (ds_example["DS"].shape[0], 1, 4, 1)), axis=3)
+            with open(f'./averaged_dynspec/SB{sbid:05d}.pkl', 'wb') as file:
+                pickle.dump(ds_example, file)
+
+    dynspecs = sorted(glob.glob("./averaged_dynspec/SB*.pkl"))
+    sbids = np.array([int(Path(dsfile).stem.split("SB")[1]) for dsfile in dynspecs])
 
     # MeerKAT data -- currently just two pkls
-    # Preprocessing includes removing the Stokes I ripple
+    # Preprocessing means applying the primary beam
     dynspecs_m = ["./dynspec/1652551867-sdp-l0_2026-05-22T14-51-05_zBI_nominbl.pkl", "./dynspec/1656147142-sdp-l0_2026-06-08T16-46-06_bOB.pkl"]
+    
+    if MKTPBCorr is True:
+        for dsfile in dynspecs_m:
+            ds = np.load(dsfile, allow_pickle=True)
+            cbid = int(Path(dsfile).stem[0:10])
+             
+            pb_vals = []
+    # TODO improve efficiency
+            for freq in ds["FREQS"]:
+                pb_vals.append(MKCosBeam(get_beam_pos_mkt(cbid).separation(J1555.coord).deg, freq))
+            pb_vals = np.array(pb_vals) 
+            ds["DS"] /= np.tile(pb_vals[None, :, None], (ds["DS"].shape[0], 1, 4))
+            with open(f'./averaged_dynspec/CB{cbid:010d}.pkl', 'wb') as file:
+                pickle.dump(ds, file)
+
+    dynspecs_m = sorted(glob.glob("./averaged_dynspec/CB*pkl"))
+    cbids = np.array([int(Path(dsfile).stem.split("CB")[1]) for dsfile in dynspecs_m])
 
     tstarts = []
+    obslengths = []
     ts = []
     lcs = []
+    maxs = []
+    rmss = []
     colors = []
+    freqs = []
     for pkl in dynspecs:
-        t, l = make_light_curve(pkl, J1555.coord)
-        tstarts.append(t[0])
+        t, l, fc = make_light_curve(pkl, J1555.coord)
+        tstarts.append(t[0].mjd)
+        obslengths.append(24*60*(t[-1].mjd - t[0].mjd))
         ts.append(t)
         lcs.append(l)
+        maxs.append(np.nanmax(l))
+        rmss.append(np.nanstd(l))
+        freqs.append(fc)
         colors.append('black')
 
     for pkl in dynspecs_m:
-        t, l = make_light_curve(pkl, J1555.coord)
-        tstarts.append(t[0])
+        t, l, fc = make_light_curve(pkl, J1555.coord)
+        tstarts.append(t[0].mjd)
+        obslengths.append(24*60*(t[-1].mjd - t[0].mjd))
         ts.append(t)
         lcs.append(l)
+        maxs.append(np.nanmax(l))
+        rmss.append(np.nanstd(l))
+        freqs.append(fc)
         colors.append('purple')
 
+    ids = np.concatenate([sbids, cbids])
 # Sort all data by the start time
     ts = [t for _, t in sorted(zip(tstarts, ts))]
     lcs = [lc for _, lc in sorted(zip(tstarts, lcs))]
-    colors = [lc for _, lc in sorted(zip(tstarts, colors))]
+    colors = [color for _, color in sorted(zip(tstarts, colors))]
+    maxs = [m for _, m in sorted(zip(tstarts, maxs))]
+    rmss = [rms for _, rms in sorted(zip(tstarts, rmss))]
+    freqs = [f for _, f in sorted(zip(tstarts, freqs))]
+    ids = [i for _, i in sorted(zip(tstarts, ids))]
+    obslengths = [o for _, o in sorted(zip(tstarts, obslengths))]
+# And LAST sort the start times
+    tstarts = sorted(tstarts)
 
+# Stacked light curve plot
 # Full page width
     fig = plt.figure(figsize=(17*cm, 12.5*cm))
     gs = GridSpec(1, 3, figure=fig)
@@ -504,10 +558,50 @@ def main():
     fig.savefig("observations_stacked.png", format="png")
     fig.savefig("observations_stacked.pdf", format="pdf")
 
-#    plt.show()
+# Upper limits as a function of time
+    fig = plt.figure(figsize=(17*cm,5*cm))
+    ax = fig.add_subplot(111)
+    for ts, rms, m, c in zip(tstarts, rmss, maxs, colors):
+        if m / rms > 8:
+            ax.scatter(ts, m, color=c, marker='*')
+            ax.errorbar(ts, m, yerr=rms, color=c)
+        else:
+            ax.scatter(ts, rms, marker='v', color=c)
+    ax.set_xlabel("MJD")
+    ax.set_ylabel("Flux density (mJy)")
+    legend_elements = [Line2D([0], [0], lw=0, markerfacecolor='none', markeredgecolor='k', marker='v', label='1-$\sigma$ RMS'),
+                       Line2D([0], [0], lw=0, markerfacecolor='none', markeredgecolor='k', marker='*', label='Detections\n(brightest pulse)')]
+    ax.legend(loc=1, handles=legend_elements)
+    fig.savefig("Archival_upper_limits.pdf", bbox_inches="tight")
 
+# Make a LaTeX table output
+    times = Time(tstarts, format='mjd', scale='utc')
+    datestrs = np.array([justdate(t) for t in times])
+    hhmmstrs = np.array([hhmm(t) for t in times])
+    freqs = np.array(freqs)/1.e6
+    obslengths = np.array(obslengths)
+
+    with open("obs_table.tex", "w") as f:
+        for i in range(0, len(ids)):
+            date, time, iid, freq, obslength = datestrs[i], hhmmstrs[i], ids[i], freqs[i], obslengths[i]
+            if iid < 999999:
+    # It's an ASKAP observation
+                valid_pkls = sorted(glob.glob(f"./dynspec/*SB{iid}*pkl"))
+                beams = []
+                for dsfile in valid_pkls:
+                    beams.append(dsfile.split("beam")[1][0:2])
+                f.write(f"{date} & {time} & ASKAP & SB{iid} beams:")
+                for j in range(0,len(beams)):
+                    f.write(f"{beams[j]}")
+                    if j < len(beams) - 1:
+                        f.write(f",")
+                f.write(f"& {freq:4.0f} & {obslength:2.0f} \\\\\n")
+    # It's a MeerKAT observation
+            else:
+                f.write(f"{date} & {time} & MeerKAT & CB{iid} & {freq:4.0f} & {obslength:2.0f} \\\\\n")
 
 if __name__ == "__main__":
     main()
+
 
 
