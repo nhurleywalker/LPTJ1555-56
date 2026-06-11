@@ -34,7 +34,7 @@ PARAMS = {
     "font.size": 7,
     "legend.fontsize": 7,
     "xtick.labelsize": 7,
-    "ytick.labelsize": 6,
+    "ytick.labelsize": 7,
 }
 
 matplotlib.rcParams.update(PARAMS)
@@ -60,6 +60,8 @@ def make_light_curve(dsfile, coords):
     telescope = arr["TELESCOPE"]
     if telescope == "ASKAP":
         loc = EarthLocation.of_site('mwa')
+    elif telescope == "MeerKAT":
+        loc = EarthLocation.of_site('salt')
     else:
         loc = EarthLocation.of_site(telescope)
     times = Time(arr["TIMES"]/(24*3600), scale='utc', format='mjd', location=loc)
@@ -69,21 +71,39 @@ def make_light_curve(dsfile, coords):
     It = np.real(arr["DS"][:,:,0]+arr["DS"][:,:,3])/2
     Qt = np.real((arr["DS"][:,:,0]-arr["DS"][:,:,3]))/2
     spec_std = np.nanstd(Qt, axis=0)
-    med_spec_std = np.nanmedian(spec_std)
-    std_spec_std = np.nanstd(spec_std)
-# TODO also fit a curve to this to improve flagging
-# Sanity plot
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-    ax.plot(spec_std)
-    ax.set_ylabel("standard deviation")
-    ax.set_xlabel("channel index")
-    ax.axhline(med_spec_std+3*std_spec_std, color='red')
-    stem = Path(dsfile).stem
-    fig.savefig(f'sanity_check_{stem}.png', bbox_inches="tight")
-    lc = 1000*np.nanmean(It[:,spec_std<(med_spec_std+3*std_spec_std)], axis=1)
+    xrange = np.arange(0,len(spec_std))
+    deg = 3
+    p = np.polynomial.Polynomial.fit(xrange[~np.isnan(spec_std)], spec_std[~np.isnan(spec_std)], deg=deg)
+# One round of sigma-clipping
+    std_spec_std = np.nanstd(spec_std-p(xrange))
+    ind = np.logical_and(~np.isnan(spec_std),np.abs(spec_std - p(xrange))<2*std_spec_std)
+    p = np.polynomial.Polynomial.fit(xrange[ind], spec_std[ind], deg=deg)
+    med_spec_std = np.nanmedian(spec_std-p(xrange))
+    std_spec_std = np.nanstd(spec_std-p(xrange))
 
-    return times.tdb + bary_tt, lc
+# Sanity plot for RFI flagging
+#    fig = plt.figure()
+#    ax = fig.add_subplot(111)
+#    ax.plot(spec_std-p(xrange))
+#    ax.set_ylabel("standard deviation - poly offset")
+#    ax.set_xlabel("channel index")
+#    ax.axhline(med_spec_std+3*std_spec_std, color='red')
+#    stem = Path(dsfile).stem
+#    fig.savefig(f'sanity_check_{stem}.png', bbox_inches="tight")
+
+    lc = np.nanmean(It[:,(spec_std-p(xrange))<(med_spec_std+3*std_spec_std)], axis=1)
+
+# Remove any time-dependent slow variation (esp. MeerKAT data)
+    if telescope == "MeerKAT" and len(times)>100:
+# It's the discovery observation and we need to do a lot of baseline removal
+        print(f"derippling {dsfile}")
+        lc = deripple_long(times.mjd*24*3600, lc)
+    else:
+        print(f"derippling {dsfile}")
+        lc = deripple_short(times.mjd*24*3600, lc)
+
+# Convert times to barycentred and light curve to mJy
+    return times.tdb + bary_tt, 1000*lc
 
 #@dataclass
 #class Observation:
@@ -169,6 +189,7 @@ def plot_rows(
     phase_errors,
     phase,
     flux,
+    color,
     rows,
 ) -> dict:
     """
@@ -178,9 +199,9 @@ def plot_rows(
     """
 
     # Sample colourmap
-    cmap = plt.get_cmap("inferno")
-    norm = Normalize(vmin=500, vmax=3000)
-    color = cmap(norm(1000))
+#    cmap = plt.get_cmap("inferno")
+#    norm = Normalize(vmin=500, vmax=3000)
+#    color = cmap(norm(1000))
 
     # Walk through contiguous chunks of constant row index
     breaks = list(np.flatnonzero(rows[1:] != rows[:-1]) + 1)
@@ -197,7 +218,8 @@ def plot_rows(
             phase[start:stop],
             ytrace,
             color=color,
-            alpha=0.5,
+            lw=0.75,
+            alpha=0.8,
         )
 
         # Calculate phase error for this row
@@ -220,6 +242,7 @@ def plot_folded_lightcurves(
     ax,
     ts,
     lcs,
+    colors,
     source
 ):
     """
@@ -241,7 +264,7 @@ def plot_folded_lightcurves(
         "maxs": [],
     }
 
-    for t, lc in zip(ts, lcs):
+    for t, lc, color in zip(ts, lcs, colors):
         row_step = 10
 
         flux = lc
@@ -271,6 +294,7 @@ def plot_folded_lightcurves(
             phase_errors=phase_errors,
             phase=phase,
             flux=flux,
+            color=color,
             rows=row_indices,
         )
 
@@ -299,19 +323,105 @@ def plot_folded_lightcurves(
 
     return ax
 
+def deripple_short(t, lc):
+    deg = 3
+    p = np.polynomial.Polynomial.fit(t[~np.isnan(lc)], lc[~np.isnan(lc)], deg=deg)
+    return lc - p(t)
 
-# TODO not sure about this click thing
+def deripple_long(times_m, ilc_m):
+    # First break the data into four segments
+    tdiff = times_m[1:] - times_m[0:-1]
+    tbreak = np.where(np.abs(tdiff) > 50)[0]
+    #(array([223, 447, 672]),)
+    seg1_end = tbreak[0]+1
+    seg2_end = tbreak[1]+1
+    seg3_end = tbreak[2]+1
+
+    # I noticed the first and last samples are bad in each scan, so we will flag those
+
+    # Segment 1
+    deg = 3
+    vmin, vmax = -10, 30
+    b = 3 # b for buffer
+
+    t = times_m[:seg1_end]
+    t_fit = times_m[b:seg1_end-b]
+    y = ilc_m[:seg1_end]
+    y_fit = ilc_m[b:seg1_end-b]
+    p = np.polynomial.Polynomial.fit(t_fit, y_fit, deg=deg)
+    y_smooth = p(t)
+
+    ilc_m[:seg1_end] = y - y_smooth
+    # And now flag the buffer
+    ilc_m[0:b] = np.nan
+    ilc_m[seg1_end-b:seg1_end] = np.nan
+
+    # Segment 2
+    deg = 3
+    vmin, vmax = -30, 30
+    b = 10 # b for buffer
+    t = times_m[seg1_end:seg2_end]
+    t_fit = times_m[seg1_end+b:seg2_end-b]
+    y = ilc_m[seg1_end:seg2_end]
+    y_fit = ilc_m[seg1_end+b:seg2_end-b]
+    p = np.polynomial.Polynomial.fit(t_fit, y_fit, deg=deg)
+    y_smooth = p(t)
+
+    ilc_m[seg1_end:seg2_end] = y - y_smooth
+    # And now flag the buffer
+    ilc_m[seg1_end:seg1_end+b] = np.nan
+    ilc_m[seg2_end-b:seg2_end] = np.nan
+
+    # Segment 3
+    deg = 6
+    vmin, vmax = -30, 25
+    b = 10 
+    t = times_m[seg2_end:seg3_end]
+    t_fit = times_m[seg2_end+b:seg3_end-b]
+    y = ilc_m[seg2_end:seg3_end]
+    y_fit = ilc_m[seg2_end+b:seg3_end-b]
+    p = np.polynomial.Polynomial.fit(t_fit, y_fit, deg=deg)
+    y_smooth = p(t)
+
+    # In the case of this segment, there is a lot of gnarly RFI, and the pulse itself is quite bright, so do some sigma-clipping
+    new_y_fit = y_fit[np.abs(y_fit - p(t_fit))<0.003]
+    new_t_fit = t_fit[np.abs(y_fit - p(t_fit))<0.003]
+
+    p = np.polynomial.Polynomial.fit(new_t_fit, new_y_fit, deg=deg)
+    y_smooth = p(t)
+
+    ilc_m[seg2_end:seg3_end] = y - y_smooth
+    # And now flag the buffer
+    ilc_m[seg2_end:seg2_end+b] = np.nan
+    ilc_m[seg3_end-b:seg3_end] = np.nan
+
+    # Segment 4
+    vmin, vmax = -10, 60
+    deg = 3
+    b = 10
+    t = times_m[seg3_end:]
+    t_fit = times_m[seg3_end+b:-b]
+    y = ilc_m[seg3_end:]
+    y_fit = ilc_m[seg3_end+b:-b]
+    p = np.polynomial.Polynomial.fit(t_fit, y_fit, deg=deg)
+    y_smooth = p(t)
+
+    ilc_m[seg3_end:] = y - y_smooth
+    # And now flag the buffer
+    ilc_m[seg3_end:seg3_end+b] = np.nan
+    ilc_m[-b:] = np.nan
+
+    return ilc_m
+
 @click.command()
 def main():
     #setupLogger(verbose=True)
 
     J1555 = get_source()
 
-    # Set DS filepaths
+    # ASKAP data
+    # Pre-processing includes averaging the two beams together 
     dynspecs = sorted(glob.glob("./dynspec/science*.pkl"))
-#    sbids = []
-#    for dsfile in dynspecs:
-#        sbid = int(dsfile.split("SB")[1][0:5].replace("_",""))
     sbids = np.unique(np.array([int(dsfile.split("SB")[1][0:5].replace("_","")) for dsfile in dynspecs]))
     for sbid in sbids:
         dynspecs = glob.glob(f"./dynspec/*SB{sbid}*pkl")
@@ -321,69 +431,76 @@ def main():
             dsfile = dynspecs[i]
             arr = np.load(dsfile, allow_pickle=True)
             final_array[:,:,:,i] = arr["DS"]
-# TODO: RFI flagging, primary beam correction
         ds_example["DS"] = np.nanmean(final_array, axis=3)
         with open(f'./averaged_dynspec/SB{sbid:05d}.pkl', 'wb') as file:
             pickle.dump(ds_example, file)
     dynspecs = sorted(glob.glob("./averaged_dynspec/*.pkl"))
-#    data_root = Path("/Users/pri239/astro/papers/j1424-6126/analysis/data")
-#    vast_ds1 = glob.glob(f"{data_root}/vast/set1/*ds")
-#    vast_ds2 = glob.glob(f"{data_root}/vast/set2/*ds")
-#    atca_ds = glob.glob(f"{data_root}/atca/*.ds")
-#    emu_ds = glob.glob(f"{data_root}/emu/*ds")
-#    mkt_ds = glob.glob(f"{data_root}/mkt/*ds")
 
-# We will have to work this out later -- for now just do one massive panel
-    # Partition archival VAST / RACS in first two panels
-#    panel1_obs = [Observation(path=p, source=J1424) for p in vast_ds1]
-#    panel2_obs = [Observation(path=p, source=J1424) for p in vast_ds2]
 
-    # EMU and followup observations in final panel
-#    emu_obs = [Observation(path=p, source=J1424) for p in emu_ds]
-#    atca_obs = [Observation(path=p, source=J1424) for p in atca_ds]
-#    mkt_obs = [Observation(path=p, source=J1424) for p in mkt_ds]
-#    panel3_obs = [obs for obs in (atca_obs + emu_obs + mkt_obs)]
+    # MeerKAT data -- currently just two pkls
+    # Preprocessing includes removing the Stokes I ripple
+    dynspecs_m = ["./dynspec/1652551867-sdp-l0_2026-05-22T14-51-05_zBI_nominbl.pkl", "./dynspec/1656147142-sdp-l0_2026-06-08T16-46-06_bOB.pkl"]
 
+    tstarts = []
     ts = []
     lcs = []
+    colors = []
     for pkl in dynspecs:
         t, l = make_light_curve(pkl, J1555.coord)
+        tstarts.append(t[0])
         ts.append(t)
         lcs.append(l)
+        colors.append('black')
 
-# One column of A4
-    fig = plt.figure(figsize=(8.5*cm, 25*cm))
-    gs = GridSpec(1, 1, figure=fig)
-    ax = fig.add_subplot(gs[0, 0])
-#    ax_vast2 = fig.add_subplot(gs[0, 1])
-#    ax_others = fig.add_subplot(gs[0, 2])
+    for pkl in dynspecs_m:
+        t, l = make_light_curve(pkl, J1555.coord)
+        tstarts.append(t[0])
+        ts.append(t)
+        lcs.append(l)
+        colors.append('purple')
+
+# Sort all data by the start time
+    ts = [t for _, t in sorted(zip(tstarts, ts))]
+    lcs = [lc for _, lc in sorted(zip(tstarts, lcs))]
+    colors = [lc for _, lc in sorted(zip(tstarts, colors))]
+
+# Full page width
+    fig = plt.figure(figsize=(17*cm, 12.5*cm))
+    gs = GridSpec(1, 3, figure=fig)
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax2 = fig.add_subplot(gs[0, 1])
+    ax3 = fig.add_subplot(gs[0, 2])
 
     # Plot panels
-# Commenting for now to try to get things working?!
-    ax = plot_folded_lightcurves(
-        ax,
-        ts,
-        lcs,
-        source=J1555,
+# The first few observations are very long
+    ax1 = plot_folded_lightcurves(
+        ax1,
+        ts[0:9],
+        lcs[0:9],
+        colors[0:9],
+        source=J1555
     )
-
-#    ax_vast2 = plot_folded_lightcurves(
-#        ax_vast2,
-#        sorted(panel2_obs, key=lambda x: x.t_start),
-#        source=J1424,
-#    )
-#    ax_others = plot_folded_lightcurves(
-#        ax_others,
-#        sorted(panel3_obs, key=lambda x: x.t_start),
-#        source=J1424,
-#    )
-
+# The rest are short
+    ax2 = plot_folded_lightcurves(
+        ax2,
+        ts[9:25],
+        lcs[9:25],
+        colors[9:25],
+        source=J1555
+    )
+    ax3 = plot_folded_lightcurves(
+        ax3,
+        ts[25:],
+        lcs[25:],
+        colors[25:],
+        source=J1555
+    )
     fig.tight_layout()
 
-    ymin, ymax = ax.get_ylim()
-# Decrease padding
-    ax.set_ylim(ymin+60, ymax-60)
-    print( ax.get_ylim())
+    for ax in [ax1, ax2]:
+        ymin, ymax = ax.get_ylim()
+# Decrease padding (no idea why it is so large)
+        ax.set_ylim(ymin+10, ymax-10)
     fig.savefig("observations_stacked.png", format="png")
     fig.savefig("observations_stacked.pdf", format="pdf")
 
@@ -392,3 +509,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
