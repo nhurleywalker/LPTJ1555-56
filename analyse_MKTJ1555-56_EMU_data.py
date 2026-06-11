@@ -9,9 +9,10 @@ from statsmodels.graphics.tsaplots import plot_acf
 import pandas as pd
 import yaml
 
-
 import glob
 import sys
+
+from primary_beams import GaussianPB
 
 makeDynspec = False
 makeLightcurves = False
@@ -25,6 +26,7 @@ makeJointIQUV = False
 makeUpperlimits = False
 tryBandSplit = False
 makeACF = False
+makeSpectrum = True
 
 cm = 1/2.54  # centimeters in inches
 # Figure font size
@@ -93,95 +95,10 @@ def make_lightcurve(times, lc, vmin, vmax, lw, color, alpha, label, outname, off
     ax.legend(loc=1)
     fig.savefig(outname, bbox_inches="tight")
 
-class GaussianPB:
-    
-    def __init__(self,aperture = 12.0, expscaling = 4.0 * np.log(2.0), frequency = 1.1e9):
-        
-        self.aperture = aperture
-        self.expScaling = expscaling
-        self.frequency=frequency
-        self.setXwidth(self.getFWHM())
-        self.setYwidth(self.getFWHM())
-        self.setAlpha(0.0)
-        self.setXoff(0.0)
-        self.setYoff(0.0)
-        
-    
-    def getFWHM(self):
-        sol = 299792458.0;
-        fwhm = sol / self.frequency / self.aperture
-        return fwhm
-    
-    def evaluate(self,offset = 0.0, freq = 0.0):
-        if (freq > 0):
-            self.frequency=freq
-            
-        pb = np.exp(-offset * offset * self.expScaling / (self.getFWHM() * self.getFWHM()))
-        return pb
-    
-    def setXwidth(self,xwidth):
-        self.xwidth = xwidth
-        
-    def setYwidth(self,ywidth):
-        self.ywidth = ywidth
-        
-    def setAlpha(self,Angle):
-        self.Alpha = Angle
-        
-    def setXoff(self,xoff):
-        self.xoff = xoff
-        
-    def setYoff(self,yoff):
-        self.yoff = yoff
-        
-    def evaluateAtOffset(self,offsetPAngle=0, offsetDist=0, freq=0):
-            
-        # x-direction is assumed along the meridian in the direction of north celestial pole
-        # the offsetPA angle is relative to the meridian
-        # the Alpha angle is the rotation of the beam pattern relative to the meridian
-        # Therefore the offset relative to the
-                
-        if (freq > 0):
-            self.frequency=freq
-            
-        x_angle = offsetDist * np.cos(offsetPAngle - self.Alpha)
-        y_angle = offsetDist * np.sin(offsetPAngle - self.Alpha)
-                    
-        x_pb = np.exp(-1.0 * self.expScaling * np.power((x_angle - self.xoff) / self.xwidth, 2.0))
-        y_pb = np.exp(-1.0 * self.expScaling * np.power((y_angle - self.yoff) / self.ywidth, 2.0))
-
-        return x_pb * y_pb
-
-    def make_sparse(array, start=0, box=5):
-        ''' remove close-packed points '''
-        i = 0
-        keep = []
-        print(start)
-        for j in range(0, len(array)-1):
-            if array[j] > start:
-                diff = array[j+1] - array[j]
-                if diff < box:
-                    i += 1
-                else:
-                    keep.append(array[j - int(i/2) - 1])
-                    i = 0
-        return(keep)
-
 XX = 0
 XY = 1
 YX = 2
 YY = 3
-
-cmap = { "I" : "viridis",
-         "Q" : "RdBu_r",
-         "U" : "RdBu",
-         "V" : "PRGn" }
-
-# Trying to make paper plots that show things
-cmap = { "I" : "plasma",
-         "Q" : "bwr_r",
-         "U" : "bwr_r",
-         "V" : "bwr_r"}
 
 color = { "I" : "black",
          "Q" : "red",
@@ -197,15 +114,15 @@ color = { "I" : "black",
          "L" : "red",
          "T" : "darkgrey" }
 
-arr1 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam15_averaged_cal.leakage.pkl", allow_pickle=True)
-arr2 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam09_averaged_cal.leakage.pkl", allow_pickle=True)
+#arr1 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam15_averaged_cal.leakage.pkl", allow_pickle=True)
+#arr2 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam09_averaged_cal.leakage.pkl", allow_pickle=True)
 # This version has been run through FixMS, which is current ASKAP best practice
 arr3 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam09_averaged_cal.leakage_fixms.pkl", allow_pickle=True)
 arr4 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam15_averaged_cal.leakage_fixms.pkl", allow_pickle=True)
 
-freqs_a = arr1["FREQS"]/1.e9
-times_a = arr1["TIMES"]
-times_az = arr1["TIMES"] - arr1["TIMES"][0]
+freqs_a = arr3["FREQS"]/1.e9
+times_a = arr3["TIMES"]
+times_az = arr3["TIMES"] - arr3["TIMES"][0]
 
 #mkt = np.load("dynspec/1652551867-sdp-l0_2026-05-22T14-51-05_zBI_after_field_imaged_minbl100.pkl", allow_pickle=True)
 mkt = np.load("dynspec/1652551867-sdp-l0_2026-05-22T14-51-05_zBI.pkl", allow_pickle=True)
@@ -219,17 +136,17 @@ times_m2 = mkt2["TIMES"]
 times_mz = mkt["TIMES"] - mkt["TIMES"][0]
 
 # ASKAP data correct transforms -- if data has not been modified by FixMS
-polaxis = -45.0
-theta = 2.0 * np.radians(polaxis)
-It1 = np.real((arr1["DS"][:,:,YY]+arr1["DS"][:,:,XX]))
-It2 = np.real((arr2["DS"][:,:,YY]+arr2["DS"][:,:,XX]))
-Qt1 = np.real(np.cos(theta)*(arr1["DS"][:,:,YX]+arr1["DS"][:,:,XY]) - np.sin(theta)*(arr1["DS"][:,:,YY]-arr1["DS"][:,:,XX]))
-Qt2 = np.real(np.cos(theta)*(arr2["DS"][:,:,YX]+arr2["DS"][:,:,XY]) - np.sin(theta)*(arr2["DS"][:,:,YY]-arr2["DS"][:,:,XX]))
-Ut1 = np.real(np.sin(theta)*(arr1["DS"][:,:,YX]+arr1["DS"][:,:,XY]) + np.cos(theta)*(arr1["DS"][:,:,YY]-arr1["DS"][:,:,XX]))
-Ut2 = np.real(np.sin(theta)*(arr2["DS"][:,:,YX]+arr2["DS"][:,:,XY]) + np.cos(theta)*(arr2["DS"][:,:,YY]-arr2["DS"][:,:,XX]))
-#Vt2 = np.real(-1j * (arr["DS"][:,:,XY]-arr["DS"][:,:,YX]))
-Vt1 = np.imag((arr1["DS"][:,:,YX]-arr1["DS"][:,:,XY]))
-Vt2 = np.imag((arr2["DS"][:,:,YX]-arr2["DS"][:,:,XY]))
+#polaxis = -45.0
+#theta = 2.0 * np.radians(polaxis)
+#It1 = np.real((arr1["DS"][:,:,YY]+arr1["DS"][:,:,XX]))
+#It2 = np.real((arr2["DS"][:,:,YY]+arr2["DS"][:,:,XX]))
+#Qt1 = np.real(np.cos(theta)*(arr1["DS"][:,:,YX]+arr1["DS"][:,:,XY]) - np.sin(theta)*(arr1["DS"][:,:,YY]-arr1["DS"][:,:,XX]))
+#Qt2 = np.real(np.cos(theta)*(arr2["DS"][:,:,YX]+arr2["DS"][:,:,XY]) - np.sin(theta)*(arr2["DS"][:,:,YY]-arr2["DS"][:,:,XX]))
+#Ut1 = np.real(np.sin(theta)*(arr1["DS"][:,:,YX]+arr1["DS"][:,:,XY]) + np.cos(theta)*(arr1["DS"][:,:,YY]-arr1["DS"][:,:,XX]))
+#Ut2 = np.real(np.sin(theta)*(arr2["DS"][:,:,YX]+arr2["DS"][:,:,XY]) + np.cos(theta)*(arr2["DS"][:,:,YY]-arr2["DS"][:,:,XX]))
+##Vt2 = np.real(-1j * (arr["DS"][:,:,XY]-arr["DS"][:,:,YX]))
+#Vt1 = np.imag((arr1["DS"][:,:,YX]-arr1["DS"][:,:,XY]))
+#Vt2 = np.imag((arr2["DS"][:,:,YX]-arr2["DS"][:,:,XY]))
 
 # ASKAP transforms *after* running through FixMS, using Alec's conventions (which he says are the same as WScClean)
 It3 = np.real((arr3["DS"][:,:,XX]+arr3["DS"][:,:,YY]))/2
@@ -242,14 +159,14 @@ Ut4 = np.real((arr4["DS"][:,:,XY]+arr4["DS"][:,:,YX]))/2
 Vt4 = np.real((-1j*arr4["DS"][:,:,XY]+1j*arr4["DS"][:,:,YX]))/2
 
 # RFI flagging
-It1[:,124] = np.nan
-Qt1[:,124] = np.nan
-Ut1[:,124] = np.nan
-Vt1[:,124] = np.nan
-It2[:,124] = np.nan
-Qt2[:,124] = np.nan
-Ut2[:,124] = np.nan
-Vt2[:,124] = np.nan
+#It1[:,124] = np.nan
+#Qt1[:,124] = np.nan
+#Ut1[:,124] = np.nan
+#Vt1[:,124] = np.nan
+#It2[:,124] = np.nan
+#Qt2[:,124] = np.nan
+#Ut2[:,124] = np.nan
+#Vt2[:,124] = np.nan
 It3[:,124] = np.nan
 Qt3[:,124] = np.nan
 Ut3[:,124] = np.nan
@@ -259,14 +176,14 @@ Qt4[:,124] = np.nan
 Ut4[:,124] = np.nan
 Vt4[:,124] = np.nan
 
-It1[:,0:16] = np.nan
-Qt1[:,0:16] = np.nan
-Ut1[:,0:16] = np.nan
-Vt1[:,0:16] = np.nan
-It2[:,0:16] = np.nan
-Qt2[:,0:16] = np.nan
-Ut2[:,0:16] = np.nan
-Vt2[:,0:16] = np.nan
+#It1[:,0:16] = np.nan
+#Qt1[:,0:16] = np.nan
+#Ut1[:,0:16] = np.nan
+#Vt1[:,0:16] = np.nan
+#It2[:,0:16] = np.nan
+#Qt2[:,0:16] = np.nan
+#Ut2[:,0:16] = np.nan
+#Vt2[:,0:16] = np.nan
 It3[:,0:16] = np.nan
 Qt3[:,0:16] = np.nan
 Ut3[:,0:16] = np.nan
@@ -325,27 +242,27 @@ Vt = (Vt3 + Vt4) / (w3 + w4)
 if makeDynspec is True:
     vmin, vmax = -0.005, 0.03
     make_dynspec(It.T, vmin, vmax, cmap["I"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_StokesI_dynspec.png")
-    make_dynspec(It1.T, vmin, vmax, cmap["I"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesI_dynspec.png")
-    make_dynspec(It2.T, vmin, vmax, cmap["I"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesI_dynspec.png")
+#    make_dynspec(It1.T, vmin, vmax, cmap["I"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesI_dynspec.png")
+#    make_dynspec(It2.T, vmin, vmax, cmap["I"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesI_dynspec.png")
     make_dynspec(It3.T, vmin, vmax, cmap["I"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesI_fixms_dynspec.png")
     make_dynspec(It4.T, vmin, vmax, cmap["I"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesI_fixms_dynspec.png")
 
     vmin, vmax = -0.02, 0.02
     make_dynspec(Qt.T, vmin, vmax, cmap["Q"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_StokesQ_dynspec.png")
-    make_dynspec(Qt1.T, vmin, vmax, cmap["Q"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesQ_dynspec.png")
-    make_dynspec(Qt2.T, vmin, vmax, cmap["Q"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesQ_dynspec.png")
+#    make_dynspec(Qt1.T, vmin, vmax, cmap["Q"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesQ_dynspec.png")
+#    make_dynspec(Qt2.T, vmin, vmax, cmap["Q"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesQ_dynspec.png")
     make_dynspec(Qt3.T, vmin, vmax, cmap["Q"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesQ_fixms_dynspec.png")
     make_dynspec(Qt4.T, vmin, vmax, cmap["Q"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesQ_fixms_dynspec.png")
 
     make_dynspec(Ut.T, vmin, vmax, cmap["U"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_StokesU_dynspec.png")
-    make_dynspec(Ut1.T, vmin, vmax, cmap["U"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesU_dynspec.png")
-    make_dynspec(Ut2.T, vmin, vmax, cmap["U"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesU_dynspec.png")
+#    make_dynspec(Ut1.T, vmin, vmax, cmap["U"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesU_dynspec.png")
+#    make_dynspec(Ut2.T, vmin, vmax, cmap["U"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesU_dynspec.png")
     make_dynspec(Ut3.T, vmin, vmax, cmap["U"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesU_fixms_dynspec.png")
     make_dynspec(Ut4.T, vmin, vmax, cmap["U"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesU_fixms_dynspec.png")
 
     make_dynspec(Vt.T, vmin, vmax, cmap["V"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_StokesV_dynspec.png")
-    make_dynspec(Vt1.T, vmin, vmax, cmap["V"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesV_dynspec.png")
-    make_dynspec(Vt2.T, vmin, vmax, cmap["V"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesV_dynspec.png")
+#    make_dynspec(Vt1.T, vmin, vmax, cmap["V"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesV_dynspec.png")
+#    make_dynspec(Vt2.T, vmin, vmax, cmap["V"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesV_dynspec.png")
     make_dynspec(Vt3.T, vmin, vmax, cmap["V"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam09_StokesV_fixms_dynspec.png")
     make_dynspec(Vt4.T, vmin, vmax, cmap["V"], [0, times_az[-1], freqs_a[0], freqs_a[-1]], "EMU_beam15_StokesV_fixms_dynspec.png")
 
@@ -356,15 +273,15 @@ qlc_a = np.nanmean(Qt, axis=1)
 ulc_a = np.nanmean(Ut, axis=1)
 vlc_a = np.nanmean(Vt, axis=1)
 
-ilc1_a = np.nanmean(It1, axis=1)
-qlc1_a = np.nanmean(Qt1, axis=1)
-ulc1_a = np.nanmean(Ut1, axis=1)
-vlc1_a = np.nanmean(Vt1, axis=1)
+#ilc1_a = np.nanmean(It1, axis=1)
+#qlc1_a = np.nanmean(Qt1, axis=1)
+#ulc1_a = np.nanmean(Ut1, axis=1)
+#vlc1_a = np.nanmean(Vt1, axis=1)
 
-ilc2_a = np.nanmean(It2, axis=1)
-qlc2_a = np.nanmean(Qt2, axis=1)
-ulc2_a = np.nanmean(Ut2, axis=1)
-vlc2_a = np.nanmean(Vt2, axis=1)
+#ilc2_a = np.nanmean(It2, axis=1)
+#qlc2_a = np.nanmean(Qt2, axis=1)
+#ulc2_a = np.nanmean(Ut2, axis=1)
+#vlc2_a = np.nanmean(Vt2, axis=1)
 
 ilc3_a = np.nanmean(It3, axis=1)
 qlc3_a = np.nanmean(Qt3, axis=1)
@@ -379,27 +296,27 @@ vlc4_a = np.nanmean(Vt4, axis=1)
 if makeLightcurves is True:
     vmin, vmax =  -5, 15
     make_lightcurve(times_az, 1000*ilc_a, vmin, vmax, 0.5, color["I"], 1.0, 'Stokes I', 'EMU_StokesI_light_curve.png', offset=times_a[0])
-    make_lightcurve(times_az, 1000*ilc1_a, vmin, vmax, 0.5, color["I"], 1.0, 'Stokes I', 'EMU_beam15_StokesI_light_curve.png', offset=times_a[0])
-    make_lightcurve(times_az, 1000*ilc2_a, vmin, vmax, 0.5, color["I"], 1.0, 'Stokes I', 'EMU_beam09_StokesI_light_curve.png', offset=times_a[0])
+#    make_lightcurve(times_az, 1000*ilc1_a, vmin, vmax, 0.5, color["I"], 1.0, 'Stokes I', 'EMU_beam15_StokesI_light_curve.png', offset=times_a[0])
+#    make_lightcurve(times_az, 1000*ilc2_a, vmin, vmax, 0.5, color["I"], 1.0, 'Stokes I', 'EMU_beam09_StokesI_light_curve.png', offset=times_a[0])
     make_lightcurve(times_az, 1000*ilc3_a, vmin, vmax, 0.5, color["I"], 1.0, 'Stokes I', 'EMU_beam09_StokesI_fixms_light_curve.png', offset=times_a[0])
     make_lightcurve(times_az, 1000*ilc4_a, vmin, vmax, 0.5, color["I"], 1.0, 'Stokes I', 'EMU_beam15_StokesI_fixms_light_curve.png', offset=times_a[0])
 
     vmin, vmax =  -15, 15
     make_lightcurve(times_az, 1000*qlc_a, vmin, vmax, 0.5, color["Q"], 1.0, 'Stokes Q', 'EMU_StokesQ_light_curve.png', offset=times_a[0])
-    make_lightcurve(times_az, 1000*qlc1_a, vmin, vmax, 0.5, color["Q"], 1.0, 'Stokes Q', 'EMU_beam15_StokesQ_light_curve.png', offset=times_a[0])
-    make_lightcurve(times_az, 1000*qlc2_a, vmin, vmax, 0.5, color["Q"], 1.0, 'Stokes Q', 'EMU_beam09_StokesQ_light_curve.png', offset=times_a[0])
+#    make_lightcurve(times_az, 1000*qlc1_a, vmin, vmax, 0.5, color["Q"], 1.0, 'Stokes Q', 'EMU_beam15_StokesQ_light_curve.png', offset=times_a[0])
+#    make_lightcurve(times_az, 1000*qlc2_a, vmin, vmax, 0.5, color["Q"], 1.0, 'Stokes Q', 'EMU_beam09_StokesQ_light_curve.png', offset=times_a[0])
     make_lightcurve(times_az, 1000*qlc3_a, vmin, vmax, 0.5, color["Q"], 1.0, 'Stokes Q', 'EMU_beam09_StokesQ_fixms_light_curve.png', offset=times_a[0])
     make_lightcurve(times_az, 1000*qlc4_a, vmin, vmax, 0.5, color["Q"], 1.0, 'Stokes Q', 'EMU_beam15_StokesQ_fixms_light_curve.png', offset=times_a[0])
 
     make_lightcurve(times_az, 1000*ulc_a, vmin, vmax, 0.5, color["U"], 1.0, 'Stokes U', 'EMU_StokesU_light_curve.png', offset=times_a[0])
-    make_lightcurve(times_az, 1000*ulc1_a, vmin, vmax, 0.5, color["U"], 1.0, 'Stokes U', 'EMU_beam15_StokesU_light_curve.png', offset=times_a[0])
-    make_lightcurve(times_az, 1000*ulc2_a, vmin, vmax, 0.5, color["U"], 1.0, 'Stokes U', 'EMU_beam09_StokesU_light_curve.png', offset=times_a[0])
+#    make_lightcurve(times_az, 1000*ulc1_a, vmin, vmax, 0.5, color["U"], 1.0, 'Stokes U', 'EMU_beam15_StokesU_light_curve.png', offset=times_a[0])
+#    make_lightcurve(times_az, 1000*ulc2_a, vmin, vmax, 0.5, color["U"], 1.0, 'Stokes U', 'EMU_beam09_StokesU_light_curve.png', offset=times_a[0])
     make_lightcurve(times_az, 1000*ulc3_a, vmin, vmax, 0.5, color["U"], 1.0, 'Stokes U', 'EMU_beam09_StokesU_fixms_light_curve.png', offset=times_a[0])
     make_lightcurve(times_az, 1000*ulc4_a, vmin, vmax, 0.5, color["U"], 1.0, 'Stokes U', 'EMU_beam15_StokesU_fixms_light_curve.png', offset=times_a[0])
 
     make_lightcurve(times_az, 1000*vlc_a, vmin, vmax, 0.5, color["V"], 1.0, 'Stokes V', 'EMU_StokesV_light_curve.png', offset=times_a[0])
-    make_lightcurve(times_az, 1000*vlc1_a, vmin, vmax, 0.5, color["V"], 1.0, 'Stokes V', 'EMU_beam15_StokesV_light_curve.png', offset=times_a[0])
-    make_lightcurve(times_az, 1000*vlc2_a, vmin, vmax, 0.5, color["V"], 1.0, 'Stokes V', 'EMU_beam09_StokesV_light_curve.png', offset=times_a[0])
+#    make_lightcurve(times_az, 1000*vlc1_a, vmin, vmax, 0.5, color["V"], 1.0, 'Stokes V', 'EMU_beam15_StokesV_light_curve.png', offset=times_a[0])
+#    make_lightcurve(times_az, 1000*vlc2_a, vmin, vmax, 0.5, color["V"], 1.0, 'Stokes V', 'EMU_beam09_StokesV_light_curve.png', offset=times_a[0])
     make_lightcurve(times_az, 1000*vlc3_a, vmin, vmax, 0.5, color["V"], 1.0, 'Stokes V', 'EMU_beam09_StokesV_fixms_light_curve.png', offset=times_a[0])
     make_lightcurve(times_az, 1000*vlc4_a, vmin, vmax, 0.5, color["V"], 1.0, 'Stokes V', 'EMU_beam15_StokesV_fixms_light_curve.png', offset=times_a[0])
 
@@ -793,8 +710,8 @@ for i in range(indstart, indend):
 
 # find the common time range
 
-tstart = np.nanmin([arr1["TIMES"][0], mkt["TIMES"][0]])
-tend = np.nanmax([arr1["TIMES"][-1], mkt["TIMES"][-1]])
+tstart = np.nanmin([arr3["TIMES"][0], mkt["TIMES"][0]])
+tend = np.nanmax([arr3["TIMES"][-1], mkt["TIMES"][-1]])
 
 # Zoom in on the interesting section, make joint plots
 tstart, tend = 5159271500.0, 5159272500.0
@@ -960,11 +877,6 @@ if makeFold is True:
         fig.savefig("EMU_weighted_Stokes_spectra.pdf", bbox_inches="tight")
         fig.savefig("EMU_weighted_Stokes_spectra.png", bbox_inches="tight")
 
-        # [freq_Hz, I_Jy, Q_Jy, U_Jy, dI_Jy, dQ_Jy, dU_Jy]
-    # Errors are ... the RMS of a normal bin, divided by the sqrt of the number of bins used -- but not all were fully used, some had less than unity weight, so it goes up by the difference between the weights and unity weighting -- i.e. only goes down by np.sqrt(sum of weights), where weights are normalised to 1
-    #  But sqrt makes the errors too large
-        # Just some random noise-dominated area -- use the light curve not the dynamic spectrum because that is closer to what we're calculating
-        
         out = np.array([freqs_a[~np.isnan(I_pulse)]*1.e9, I_pulse[~np.isnan(I_pulse)], Q_pulse[~np.isnan(I_pulse)], U_pulse[~np.isnan(I_pulse)], rms_arr[~np.isnan(I_pulse)], rms_arr[~np.isnan(I_pulse)], rms_arr[~np.isnan(I_pulse)]])
 
         np.savetxt("EMU_folded_IQU_spectrum.txt", out.T)
@@ -1248,7 +1160,6 @@ if makeACF is True:
     fig.tight_layout()
     fig.savefig("ACF.png", bbox_inches="tight")
     fig.savefig("ACF.pdf", bbox_inches="tight")
-
 
 
 
