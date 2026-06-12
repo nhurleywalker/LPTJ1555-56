@@ -2,7 +2,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import colors
-from matplotlib.ticker import StrMethodFormatter
+from matplotlib.ticker import StrMethodFormatter, AutoMinorLocator, MultipleLocator
 from astropy.time import Time
 from astropy.coordinates import SkyCoord
 from astropy import units as u
@@ -26,8 +26,9 @@ makeRM = False
 makePhaseBin = False
 debugPoly = False
 makeJointIQUV = False
-makeJointSpectrum = True
-tryBandSplit = False
+makeJointSpectrum = False
+makeSpikySpectrum = True
+tryBandSplit = True
 makeACF = False
 
 cm = 1/2.54  # centimeters in inches
@@ -453,10 +454,111 @@ if makeDynspec is True:
     make_dynspec(Ut_m[indstart:indend].T, vmin, vmax, cmap["U"], [times_mz[indstart], times_mz[indend], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesU_dynspec_zoom.png", imwidth=5)
     make_dynspec(Vt_m[indstart:indend].T, vmin, vmax, cmap["V"], [times_mz[indstart], times_mz[indend], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesV_dynspec_zoom.png", imwidth=5)
 
+if makeSpikySpectrum is True:
+    bkg = np.tile(np.nanmean(np.vstack([It_m[indstart:indstart+17],It_m[indend-17:indend]]), axis=0), (indend-indstart-34, 1))
+    It_m_c = It_m[indstart+17:indend-17]-bkg
+
+    weights = np.nanmean(It_m_c, axis=1)
+# Sanity check
+    fig = plt.figure(figsize=(5,5))
+    ax = fig.add_subplot(111)
+    ax.plot(weights)
+    ax.set_xlabel("index")
+    ax.set_ylabel("Stokes I light curve just of spiky pulse")
+    fig.savefig("test_weights.png", bbox_inches="tight")
+    
+# Remove any negative (and indeed low) weight points, and normalise
+    weights[weights<0.005] = 0.
+    weights /= np.nanmax(weights)
+# We need to tile it to have the frequency dimension
+    weights = np.tile(weights[:,None], (1,len(freqs_m)))
+
+    I_m_c = np.nansum(np.squeeze(It_m_c)*weights, axis=0)/np.nansum(weights,axis=0)
+    I_m_c[I_m_c==0] = np.nan
+
+# Not enough S/N in raw spectrum for a fit, but let's break it down into some segments
+# Bin the data
+    I_m_b = np.hstack([np.nanmean(I_m_c[:50]), np.nanmean(I_m_c[50:190]), np.nanmean(I_m_c[190:400]), np.nanmean(I_m_c[400:600]), np.nanmean(I_m_c[600:800]), np.nanmean(I_m_c[800:])])
+    freqs_m_b = np.hstack([np.nanmean(freqs_m[:50][~np.isnan(I_m_c[:50])]), np.nanmean(freqs_m[50:190][~np.isnan(I_m_c[50:190])]), np.nanmean(freqs_m[190:400][~np.isnan(I_m_c[190:400])]), np.nanmean(freqs_m[400:600][~np.isnan(I_m_c[400:600])]), np.nanmean(freqs_m[600:800][~np.isnan(I_m_c[600:800])]), np.nanmean(freqs_m[800:][~np.isnan(I_m_c[800:])])])
+    err_m_b = np.hstack([np.nanstd(I_m_c[:50])/np.sqrt(len(I_m_c[:50][~np.isnan(I_m_c[:50])])),
+                         np.nanstd(I_m_c[50:190])/np.sqrt(len(I_m_c[50:190][~np.isnan(I_m_c[50:190])])),
+                         np.nanstd(I_m_c[190:400])/np.sqrt(len(I_m_c[190:400][~np.isnan(I_m_c[190:400])])),
+                         np.nanstd(I_m_c[400:600])/np.sqrt(len(I_m_c[400:600][~np.isnan(I_m_c[400:600])])),
+                         np.nanstd(I_m_c[600:800])/np.sqrt(len(I_m_c[600:800][~np.isnan(I_m_c[600:800])])),
+                         np.nanstd(I_m_c[800:])/np.sqrt(len(I_m_c[800:][~np.isnan(I_m_c[800:])]))])
+
+# Fit to those data
+# Skip the first bin because it's obviously not great
+
+    model = (pl, (1000*np.median(I_m_b[1:]), -0.7), 'Power Law')
+
+    nu = np.geomspace(.890, 1.700, 100)
+    fit_func = model[0]
+    fit_p0 = model[1]
+    fit_res = curve_fit(
+        fit_func,
+        freqs_m_b[1:],
+        1000*I_m_b[1:],
+        fit_p0,
+        sigma=1000*err_m_b[1:],
+        absolute_sigma=True
+    )
+
+    best_p = fit_res[0]
+    pla = best_p[1]
+    plS = pl(1, *best_p)
+
+    covar = fit_res[1]
+    err_p = np.sqrt(np.diag(covar))
+
+    print("Power-law fit parameters: S at 1 GHz = {0:3.2f}+/-{2:3.2f}mJy, alpha = {1:3.2f}+/-{3:3.2f}".format(plS, pla, err_p[0], err_p[1]))
+
+    no_samps = 1000
+    samps = np.random.multivariate_normal(
+        fit_res[0], fit_res[1], size=no_samps
+    ).swapaxes(0,1)
+
+    models = pl(
+        nu[:, None],
+        *samps
+    )
+    q16, q50, q84 = np.percentile(models, [16, 50, 84], axis=1)
+
+
+    fig = plt.figure(figsize=(8*cm,8*cm))
+    ax = fig.add_subplot(111)
+    ax.scatter(freqs_m, 1000*I_m_c, color='purple', alpha=0.3, marker='.', s=2, lw=0.5, zorder=10)
+    ax.scatter(freqs_m_b, 1000*I_m_b, color='purple', alpha=0.9, marker='.', s=6, lw=0.5, zorder=10, label="MeerKAT")
+    ax.errorbar(freqs_m_b, 1000*I_m_b, yerr=1000*err_m_b, color='purple', alpha=0.9, elinewidth=0.5, lw=0, zorder=5)
+    ax.axvspan(freqs_m[50],freqs_m[190], color='yellow', alpha=0.15)
+    ax.axvspan(freqs_m[400], freqs_m[600], color='yellow', alpha=0.15)
+    ax.axvspan(freqs_m[800], freqs_m[-1], color='yellow', alpha=0.15)
+    ax.plot(
+        nu,
+        q50,
+        lw=0.5,
+        color='red',
+    )
+    ax.fill_between(
+        nu,
+        q16, q84,
+        alpha=0.3,
+        color='red'
+    )
+    ax.set_ylabel("Weighted brightness (mJy)")
+    ax.set_xlabel("Frequency / GHz")
+    ax.set_ylim(5,35)
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.yaxis.set_major_formatter(StrMethodFormatter("{x:.0f}"))
+    ax.yaxis.set_minor_formatter(StrMethodFormatter("{x:.0f}"))
+    ax.xaxis.set_major_formatter(StrMethodFormatter("{x:.1f}"))
+    ax.xaxis.set_minor_formatter(StrMethodFormatter("{x:.1f}"))
+    fig.savefig("Spiky_pulse_spectrum.png", bbox_inches="tight", dpi=300)
 
 if tryBandSplit is True:
 # Clean up baseline
-    bkg = np.tile(np.nanmean(It_m[indstart:indend], axis=0), (indend-indstart, 1))
+    bkg = np.tile(np.nanmean(np.vstack([It_m[indstart:indstart+20],It_m[indend-20:indend]]), axis=0), (indend-indstart, 1))
     vmin, vmax = -0.03, 0.030
     make_dynspec((It_m[indstart:indend]-bkg).T, vmin, vmax, cmap["I"], [times_mz[indstart], times_mz[indend], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesI_dynspec_zoom.png", imwidth=5)
 
@@ -819,7 +921,7 @@ if makeJointSpectrum is True:
 
 # Fit to those data
 
-    model = (pl, (np.median(I_a_b), -0.7), 'Power Law')
+    model = (pl, (1000*np.median(I_a_b), -0.7), 'Power Law')
 
     nu = np.geomspace(.890, 1.700, 100)
     fit_func = model[0]
@@ -895,8 +997,6 @@ if makeJointSpectrum is True:
     fig.savefig("Joint_spectrum.pdf", bbox_inches="tight", dpi=300)
     fig.savefig("Joint_spectrum.png", bbox_inches="tight", dpi=300)
 
-
-
 if makeFold is True:
     # Fold the ASKAP data
     # Put these into MJD (instead of MJD seconds)
@@ -971,6 +1071,7 @@ if makeFold is True:
     print(f"Inter-pulse is about {len_ip:2.0f}s wide.")
     fig.savefig("Folded_EMU_light_curve.pdf", bbox_inches="tight")
 
+
     if makeRM is True:
 # Try to fit the RM from the highest S/N phase bins in the EMU data
         ind = np.logical_and(phase>phase_start, phase<phase_end)
@@ -1031,6 +1132,78 @@ if makeFold is True:
         out = np.array([freqs_a[~np.isnan(I_pulse)]*1.e9, I_pulse[~np.isnan(I_pulse)], Q_pulse[~np.isnan(I_pulse)], U_pulse[~np.isnan(I_pulse)], rms_arr[~np.isnan(I_pulse)], rms_arr[~np.isnan(I_pulse)], rms_arr[~np.isnan(I_pulse)]])
 
         np.savetxt("EMU_folded_IQU_spectrum.txt", out.T)
+
+        f = freqs_a[~np.isnan(I_pulse)]
+        r = rms_arr[~np.isnan(I_pulse)]
+        I = I_pulse[~np.isnan(I_pulse)]
+
+        n_b = np.array([len(fr) for fr in np.array_split(f, 5)])
+        f_b = np.array([np.mean(fr) for fr in np.array_split(f, 5)])
+        r_b = np.array([np.mean(rr) for rr in np.array_split(r, 5)])/np.sqrt(n_b)
+        I_b = np.array([np.mean(ir) for ir in np.array_split(I, 5)])
+
+        model = (pl, (1000*np.nanmedian(I_b), -0.7), 'Power Law')
+
+        nu = np.geomspace(1.3, 1.45, 100)
+        fit_func = model[0]
+        fit_p0 = model[1]
+        fit_res = curve_fit(
+            fit_func,
+            f_b,
+            1000*I_b,
+            fit_p0,
+            sigma=1000*r_b,
+            absolute_sigma=True
+        )
+
+        best_p = fit_res[0]
+        pla = best_p[1]
+        plS = pl(1, *best_p)
+
+        covar = fit_res[1]
+        err_p = np.sqrt(np.diag(covar))
+
+        print("Power-law fit parameters: S at 1 GHz = {0:3.2f}+/-{2:3.2f}mJy, alpha = {1:3.2f}+/-{3:3.2f}".format(plS, pla, err_p[0], err_p[1]))
+
+        no_samps = 1000
+        samps = np.random.multivariate_normal(
+            fit_res[0], fit_res[1], size=no_samps
+        ).swapaxes(0,1)
+
+        models = pl(
+            nu[:, None],
+            *samps
+        )
+        q16, q50, q84 = np.percentile(models, [16, 50, 84], axis=1)
+
+        fig = plt.figure(figsize=(8*cm,8*cm))
+        ax = fig.add_subplot(111)
+        ax.scatter(freqs_a, 1000*I_pulse, color=color['I'], alpha=0.2, marker='.', s=4, lw=0.5, zorder=10, label="Stokes I")
+        ax.scatter(f_b, 1000*I_b, color=color['I'], alpha=0.8, marker='s', s=6, lw=0.5, zorder=10, label="Stokes I")
+        ax.errorbar(f_b, 1000*I_b, yerr=1000*r_b, color=color['I'], alpha=0.8, elinewidth=0.5, lw=0, zorder=5)
+        ax.plot(
+            nu,
+            q50,
+            lw=0.5,
+            color='red',
+        )
+        ax.fill_between(
+            nu,
+            q16, q84,
+            alpha=0.3,
+            color='red'
+        )
+        ax.set_ylabel("Weighted brightness (mJy)")
+        ax.set_xlabel("Frequency / GHz")
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.yaxis.set_major_formatter(StrMethodFormatter("{x:.0f}"))
+        ax.yaxis.set_minor_formatter(StrMethodFormatter("{x:.0f}"))
+        ax.xaxis.set_major_formatter(StrMethodFormatter("{x:.2f}"))
+        ax.xaxis.set_minor_formatter(StrMethodFormatter("{x:.2f}"))
+        ax.set_ylim(8,16)
+        ax.yaxis.set_minor_locator(MultipleLocator(1))
+        fig.savefig("EMU_folded_Stokes_I_spectrum_mainpulse.png", bbox_inches="tight", dpi=300)
 
     if makePhaseBin is True:
         # Try different phase binning to see if we can obtain a polarisation angle sweep constraint (we can't)
