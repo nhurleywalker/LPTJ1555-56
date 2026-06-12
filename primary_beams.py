@@ -1,4 +1,23 @@
 import numpy as np
+from astropy.coordinates import SkyCoord, Angle
+from astropy import units as u
+from astropy.io import fits
+
+def get_beam_pos(survey, beamnum):
+    hdu = fits.open(f'beam_info/{survey}_beam_table.fits')
+    beams = hdu[1].data
+
+    bra = beams[int(beamnum)][2]
+    bdec = beams[int(beamnum)][3]
+    beam_sc = SkyCoord(Angle(bra, u.deg), Angle(bdec, u.deg), frame='fk5')
+
+    hdu.close()
+    return beam_sc
+
+def get_beam_pos_mkt(cbid):
+    beams = np.loadtxt("beam_info/MeerKAT_pointings.txt", dtype=[('cbid', int), ('ra', 'U11'), ('dec', 'U11')], delimiter=' ')
+    return SkyCoord(beams['ra'][beams['cbid']==cbid][0], beams['dec'][beams['cbid']==cbid][0], frame='fk5', unit=(u.hour, u.deg))
+    
 
 class GaussianPB:
  
@@ -58,3 +77,26 @@ class GaussianPB:
         y_pb = np.exp(-1.0 * self.expScaling * np.power((y_angle - self.yoff) / self.ywidth, 2.0))
 
         return x_pb * y_pb
+
+
+#MeerKAT Cosine beam shape function
+def MKCosBeam(rho, nu):
+    """
+    Calculate cosine beam shape (Condon & Ransom, Essential Radio Astronomy eq 3.95)
+
+    Return power gain of circularly symmetric beam
+    
+    rho   = offset from center (degrees)
+    nu    = Frequency (Hz)
+    """
+    #theta_b = radians(57.5/60) * (1.5e9/nu)
+    theta_b = 0.0167261 * (1.5e9/nu)
+    rhor = 1.18896 * np.radians(rho)/theta_b
+    div = (1.-4.*(rhor**2))
+    if abs(div)<1.0e-5:
+        div = 1.0e-5
+
+    gain = (np.cos(np.pi*rhor)/div)**2
+
+    return gain
+
