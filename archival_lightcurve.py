@@ -24,8 +24,8 @@ from primary_beams import GaussianPB, get_beam_pos, MKCosBeam, get_beam_pos_mkt
 #logger = logging.getLogger(__name__)
 cm = 1/2.54
 
-# Already did it
-ASKAPPBCorr = False
+# If you've run this already, you can make these False and save some time
+ASKAPPBCorr = True
 MKTPBCorr = False
 
 PARAMS = {
@@ -428,19 +428,15 @@ def main():
     #scienceData_SB8676_RACS_1552-56A.beam01_averaged_cal.pkl
     # But sometimes it's an underscore and sometimes a full stop -- so replace at the critical point
                 survey = dsfile.split("SB")[1].replace("_", ".").split(".")[1]
-    # TODO find beam values for POSSUM
-                if survey != "POSSUM":
     # Apply frequency-dependent primary beam 
-                    pb_vals = []
+                pb_vals = []
 # TODO improve efficiency
-                    for freq in ds["FREQS"]:
-                        pb = GaussianPB(frequency = freq*1.e9)
-                        sep = get_beam_pos(survey, beam).separation(J1555.coord)
-                        pb_vals.append(pb.evaluate(sep.rad, freq=freq))
+                for freq in ds["FREQS"]:
+                    pb = GaussianPB(frequency = freq*1.e9)
+                    sep = get_beam_pos(survey, beam).separation(J1555.coord)
+                    pb_vals.append(pb.evaluate(sep.rad, freq=freq))
         # This is just frequencies for each dynamic spectrum
-                    weights_array[:,i] = np.array(pb_vals) 
-                else:
-                    weights_array[:,i] = 0.5*np.ones(weights_array.shape[0])
+                weights_array[:,i] = np.array(pb_vals) 
                 final_array[:,:,:,i] = ds["DS"]
     # Correcting for the primary beam means multiplying by the primary beam correction (which is inversely proportional to distance to the phase centre)
     # Weighting by the primary beam means dividing by the primary beam correction (as big numbers are bad!)
@@ -483,6 +479,7 @@ def main():
     colors = []
     freqs = []
     for pkl in dynspecs:
+        print(f"Making light curve from {pkl}")
         t, l, fc = make_light_curve(pkl, J1555.coord)
         tstarts.append(t[0].mjd)
         obslengths.append(24*60*(t[-1].mjd - t[0].mjd))
@@ -494,6 +491,7 @@ def main():
         colors.append('black')
 
     for pkl in dynspecs_m:
+        print(f"Making light curve from {pkl}")
         t, l, fc = make_light_curve(pkl, J1555.coord)
         tstarts.append(t[0].mjd)
         obslengths.append(24*60*(t[-1].mjd - t[0].mjd))

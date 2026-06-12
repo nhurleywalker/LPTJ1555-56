@@ -4,14 +4,19 @@ from astropy import units as u
 from astropy.io import fits
 
 def get_beam_pos(survey, beamnum):
-    hdu = fits.open(f'beam_info/{survey}_beam_table.fits')
-    beams = hdu[1].data
-
-    bra = beams[int(beamnum)][2]
-    bdec = beams[int(beamnum)][3]
-    beam_sc = SkyCoord(Angle(bra, u.deg), Angle(bdec, u.deg), frame='fk5')
-
-    hdu.close()
+    if survey == "POSSUM":
+# This data is so old that ATNF didn't save a beam table in the images, just a janky text file in the validation reports
+        beams = np.loadtxt("beam_info/POSSUM_pointings.txt", dtype=[('beamnum', int), ('ra', 'U11'), ('dec', 'U11')], delimiter=' ', usecols=(0, 3, 4))
+        bra = beams[int(beamnum)]['ra']
+        bdec = beams[int(beamnum)]['dec']
+        beam_sc = SkyCoord(bra, bdec, unit=(u.hour, u.deg), frame='fk5')
+    else:
+        hdu = fits.open(f'beam_info/{survey}_beam_table.fits')
+        beams = hdu[1].data
+        bra = beams[int(beamnum)]['ra']
+        bdec = beams[int(beamnum)]['dec']
+        beam_sc = SkyCoord(bra, bdec, unit=(u.deg, u.deg), frame='fk5')
+        hdu.close()
     return beam_sc
 
 def get_beam_pos_mkt(cbid):
