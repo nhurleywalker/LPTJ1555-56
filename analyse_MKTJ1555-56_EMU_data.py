@@ -2,17 +2,20 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import colors
+from matplotlib.ticker import StrMethodFormatter
 from astropy.time import Time
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 from statsmodels.graphics.tsaplots import plot_acf
+from scipy.optimize import curve_fit
+from scipy.special import erfi, erf
 import pandas as pd
 import yaml
 
 import glob
 import sys
 
-from primary_beams import GaussianPB
+from primary_beams import GaussianPB, MKCosBeam, get_beam_pos_mkt
 
 makeDynspec = False
 makeLightcurves = False
@@ -23,9 +26,9 @@ makeRM = False
 makePhaseBin = False
 debugPoly = False
 makeJointIQUV = False
+makeJointSpectrum = True
 tryBandSplit = False
 makeACF = False
-makeSpectrum = True
 
 cm = 1/2.54  # centimeters in inches
 # Figure font size
@@ -36,6 +39,7 @@ T0 = 59713.512505
 P = 62.2028 / (2*24*60) # minutes into days
 
 source_sc = SkyCoord("15h55m43.69s -56d31m02.4s", frame='fk5')
+
 beam_names = ["09", "15"]
 beams_sc = SkyCoord(["15h58m56.563 -56d53m16.761", "15h55m36.850 -56d06m49.968"], frame='fk5')
 
@@ -54,6 +58,9 @@ def pulsenum(mjd):
 
 def ipulsenum(mjd):
     return (mjd - T0) / (P)
+
+def pl(nu, norm, alpha):
+    return norm * nu **alpha
 
 def nicedate(t = None):
     ''' take a Time object and return a pleasantly formatted ISO string without excess precision on the seconds '''
@@ -90,7 +97,6 @@ def make_lightcurve(times, lc, vmin, vmax, lw, color, alpha, label, outname, off
     for i in range(-3, 35):
         ax.axvline((ephem(i)*24*3600 - offset), alpha=0.4, color='orange')
     ax.set_xlim(t[0], t[-1])
-    ax.set_ylim(vmin, vmax)
     ax.legend(loc=1)
     fig.savefig(outname, bbox_inches="tight")
 
@@ -113,6 +119,17 @@ color = { "I" : "black",
          "L" : "red",
          "T" : "darkgrey" }
 
+cmap = { "I" : "viridis",
+         "Q" : "RdBu_r",
+         "U" : "RdBu",
+         "V" : "PRGn" }
+
+# Trying to make paper plots that show things
+cmap = { "I" : "plasma",
+         "Q" : "bwr_r",
+         "U" : "bwr_r",
+         "V" : "bwr_r"}
+
 #arr1 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam15_averaged_cal.leakage.pkl", allow_pickle=True)
 #arr2 = np.load("dynspec/scienceData.EMU_1554-55_band2.SB40625.EMU_1554-55_band2.beam09_averaged_cal.leakage.pkl", allow_pickle=True)
 # This version has been run through FixMS, which is current ASKAP best practice
@@ -124,7 +141,9 @@ times_a = arr3["TIMES"]
 times_az = arr3["TIMES"] - arr3["TIMES"][0]
 
 #mkt = np.load("dynspec/1652551867-sdp-l0_2026-05-22T14-51-05_zBI_after_field_imaged_minbl100.pkl", allow_pickle=True)
-mkt = np.load("dynspec/1652551867-sdp-l0_2026-05-22T14-51-05_zBI.pkl", allow_pickle=True)
+#mkt = np.load("dynspec/1652551867-sdp-l0_2026-05-22T14-51-05_zBI.pkl", allow_pickle=True)
+# Primary-beam corrected version
+mkt = np.load("averaged_dynspec/CB1652551867.pkl", allow_pickle=True)
 # Can't use this as it has been baseline-dependent-averaged!
 mkt2 = np.load("dynspec/G326.31.8_Subbed.uvfits.pkl", allow_pickle=True)
 #mkt = np.load("dynspec/G326.31.8_Subbed.uvfits.pkl", allow_pickle=True)
@@ -726,6 +745,7 @@ if makeJointIQUV is True:
         ax.axvline(ephem(i)*24*3600, alpha=0.4, color='orange')
     ax.set_xlim(tstart, tend)
     ax.set_ylim(-10, 30)
+    ax.axvspan(5159271905.0, 5159271950.0, color='blue', alpha=0.1)
     ax.legend(loc=1)
     fig.savefig("Joint_StokesI_lightcurve.png", bbox_inches="tight")
 
@@ -744,6 +764,138 @@ if makeJointIQUV is True:
     ax.set_xlim(tstart, tend)
     ax.legend(loc=1)
     fig.savefig("Joint_StokesQUV_lightcurve.png", bbox_inches="tight")
+
+if makeJointSpectrum is True:
+    ind_a = np.argwhere(np.logical_and(times_a<5159271950.0, times_a>5159271905.0))
+    ind_m = np.argwhere(np.logical_and(times_m<5159271950.0, times_m>5159271905.0))
+
+# First look at the dynamic spectra in this specific range
+    vmin, vmax = -0.005, 0.03
+# Closest in match is ... 40? = 4 timesteps for ASKAP, 5 timesteps for MeerKAT
+    make_dynspec(It_m[ind_m[0][0]-30:ind_m[-1][0]+30,:].T, vmin, vmax, cmap["I"], [times_mz[ind_m[0][0]-30], times_mz[ind_m[-1][0]+30], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesI_joint_pulse_zoom.png", imwidth=5)
+    make_dynspec(It[ind_a[0][0]-24:ind_a[-1][0]+24,:].T, vmin, vmax, cmap["I"], [times_az[ind_a[0][0]-24], times_az[ind_a[-1][0]+24], freqs_a[0], freqs_a[-1]], "EMU_StokesI_joint_pulse_zoom.png", imwidth=5)
+
+# Clearly need to do some background subtraction for the MeerKAT data
+    bkg = np.nanmean([np.nanmean(It_m[ind_m[0][0]-4:ind_m[0][0],:], axis=0), np.nanmean(It_m[ind_m[-1][0]:ind_m[-1][0]+4,:], axis=0)], axis=0)
+# This is now 930 channel array, need to subtract a tiled version, just like calculating the weights)
+    bkg_for_plot = np.tile(bkg, (len(ind_m)+59,1))
+    bkg = np.tile(bkg, (len(ind_m),1))
+
+    make_dynspec(bkg_for_plot.T, vmin, vmax, cmap["I"], [times_mz[ind_m[0][0]-30], times_mz[ind_m[-1][0]+30], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesI_joint_pulse_zoom_bkg.png", imwidth=5)
+    make_dynspec(It_m[ind_m[0][0]-30:ind_m[-1][0]+30,:].T - bkg_for_plot.T, vmin, vmax, cmap["I"], [times_mz[ind_m[0][0]-30], times_mz[ind_m[-1][0]+30], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesI_joint_pulse_zoom_bkg_subtracted.png", imwidth=5)
+# This is just a 5-point weighting function
+    weights_a = ilc_a[ind_a]
+# Remove any negative weight points, and normalise
+    weights_a[weights_a<0] = 0.
+    weights_a /= np.nanmax(weights_a)
+# We need to tile it to have the frequency dimension
+    weights_a = np.tile(weights_a, len(freqs_a))
+
+    I_a = np.nansum(np.squeeze(It[ind_a,:])*weights_a, axis=0)/np.nansum(weights_a,axis=0)
+
+    weights_m = ilc_m[ind_m]
+    weights_m[weights_m<0] = 0.
+    # Normalise the weights to 1 as this will be useful later
+    weights_m /= np.nanmax(weights_m)
+    weights_m = np.tile(weights_m, len(freqs_m))
+    I_m = np.nansum((np.squeeze(It_m[ind_m,:])-bkg)*weights_m, axis=0)/np.nansum(weights_m,axis=0)
+
+    I_a[I_a==0] = np.nan
+    I_m[I_m==0] = np.nan
+
+# Not enough S/N in raw spectrum for a fit, but let's break it down into some segments
+# Bin the data
+    I_m_b = np.hstack([np.nanmean(I_m[:50]), np.nanmean(I_m[50:190]), np.nanmean(I_m[190:400]), np.nanmean(I_m[400:600]), np.nanmean(I_m[600:800]), np.nanmean(I_m[800:])])
+    freqs_m_b = np.hstack([np.nanmean(freqs_m[:50][~np.isnan(I_m[:50])]), np.nanmean(freqs_m[50:190][~np.isnan(I_m[50:190])]), np.nanmean(freqs_m[190:400][~np.isnan(I_m[190:400])]), np.nanmean(freqs_m[400:600][~np.isnan(I_m[400:600])]), np.nanmean(freqs_m[600:800][~np.isnan(I_m[600:800])]), np.nanmean(freqs_m[800:][~np.isnan(I_m[800:])])])
+    err_m_b = np.hstack([np.nanstd(I_m[:50])/np.sqrt(len(I_m[:50][~np.isnan(I_m[:50])])),
+                         np.nanstd(I_m[50:190])/np.sqrt(len(I_m[50:190][~np.isnan(I_m[50:190])])),
+                         np.nanstd(I_m[190:400])/np.sqrt(len(I_m[190:400][~np.isnan(I_m[190:400])])),
+                         np.nanstd(I_m[400:600])/np.sqrt(len(I_m[400:600][~np.isnan(I_m[400:600])])),
+                         np.nanstd(I_m[600:800])/np.sqrt(len(I_m[600:800][~np.isnan(I_m[600:800])])),
+                         np.nanstd(I_m[800:])/np.sqrt(len(I_m[800:][~np.isnan(I_m[800:])]))])
+    I_a_b = np.nanmean(I_a)
+    freqs_a_b = np.nanmean(freqs_a[~np.isnan(I_a)])
+    err_a_b = np.nanstd(I_a)/np.sqrt(len(I_a[~np.isnan(I_a)]))
+
+# Fit to those data
+
+    model = (pl, (np.median(I_a_b), -0.7), 'Power Law')
+
+    nu = np.geomspace(.890, 1.700, 100)
+    fit_func = model[0]
+    fit_p0 = model[1]
+    fit_res = curve_fit(
+        fit_func,
+        np.hstack([freqs_m_b,freqs_a_b]),
+        1000*np.hstack([I_m_b, I_a_b]),
+        fit_p0,
+        sigma=1000*np.hstack([err_m_b,err_a_b]),
+        absolute_sigma=True
+    )
+
+    best_p = fit_res[0]
+    pla = best_p[1]
+    plS = pl(1, *best_p)
+
+    covar = fit_res[1]
+    err_p = np.sqrt(np.diag(covar))
+
+    print("Power-law fit parameters: S at 1 GHz = {0:3.2f}+/-{2:3.2f}mJy, alpha = {1:3.2f}+/-{3:3.2f}".format(plS, pla, err_p[0], err_p[1]))
+
+    no_samps = 1000
+    samps = np.random.multivariate_normal(
+        fit_res[0], fit_res[1], size=no_samps
+    ).swapaxes(0,1)
+
+    models = pl(
+        nu[:, None],
+        *samps
+    )
+    q16, q50, q84 = np.percentile(models, [16, 50, 84], axis=1)
+
+    fig = plt.figure(figsize=(8*cm,8*cm))
+    ax = fig.add_subplot(111)
+    ax.scatter(freqs_m, 1000*I_m, color='purple', alpha=0.3, marker='.', s=2, lw=0.5, zorder=10)
+    ax.scatter(freqs_m_b, 1000*I_m_b, color='purple', alpha=0.9, marker='.', s=6, lw=0.5, zorder=10, label="MeerKAT")
+    ax.errorbar(freqs_m_b, 1000*I_m_b, yerr=1000*err_m_b, color='purple', alpha=0.9, elinewidth=0.5, lw=0, zorder=5)
+    ax.scatter(freqs_a, 1000*I_a, color=color['I'], alpha=0.2, marker='s', s=2, lw=0.5, zorder=10)
+    ax.scatter(freqs_a_b, 1000*I_a_b, color='black', alpha=0.9, marker='s', s=6, lw=0.5, zorder=10, label="ASKAP")
+    ax.errorbar(freqs_a_b, 1000*I_a_b, yerr=1000*err_a_b, color='black', alpha=0.9, elinewidth=0.5, lw=0, zorder=5)
+    ax.plot(
+        nu,
+        q50,
+        lw=0.5,
+        color='red',
+    )
+    ax.fill_between(
+        nu,
+        q16, q84,
+        alpha=0.3,
+        color='red'
+    )
+#    ax.plot(freqs_a, 1000*I_a_smoothed, color='black', alpha=0.8, lw=0.5)
+#    ax.errorbar(freqs_a, 1000*I_pulse, yerr=1000*rms_arr, color=color['I'], alpha=0.8, elinewidth=0.5, lw=0, zorder=5)
+#    ax.axhline(np.nanmean(1000*I_pulse), color=color['I'], lw=0.5)
+    ax.axvspan(freqs_m[50],freqs_m[190], color='yellow', alpha=0.15)
+    ax.axvspan(freqs_m[400], freqs_m[600], color='yellow', alpha=0.15)
+    ax.axvspan(freqs_m[800], freqs_m[-1], color='yellow', alpha=0.15)
+    ax.set_ylabel("Weighted brightness (mJy)")
+    ax.set_xlabel("Frequency / GHz")
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+#    ax.set_ylim(-20, 20)
+    ax.set_ylim(3, 50)
+    ax.legend(loc=1)
+
+    ax.yaxis.set_major_formatter(StrMethodFormatter("{x:.0f}"))
+    ax.yaxis.set_minor_formatter(StrMethodFormatter("{x:.0f}"))
+    ax.xaxis.set_major_formatter(StrMethodFormatter("{x:.1f}"))
+    ax.xaxis.set_minor_formatter(StrMethodFormatter("{x:.1f}"))
+
+    fig.savefig("Joint_spectrum.pdf", bbox_inches="tight", dpi=300)
+    fig.savefig("Joint_spectrum.png", bbox_inches="tight", dpi=300)
+
+
 
 if makeFold is True:
     # Fold the ASKAP data
