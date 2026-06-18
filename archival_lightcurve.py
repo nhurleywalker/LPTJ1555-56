@@ -25,7 +25,7 @@ from primary_beams import GaussianPB, get_beam_pos, MKCosBeam, get_beam_pos_mkt
 cm = 1/2.54
 
 # If you've run this already, you can make these False and save some time
-ASKAPPBCorr = True
+ASKAPPBCorr = False
 MKTPBCorr = False
 
 PARAMS = {
@@ -61,6 +61,7 @@ class Source:
 def make_light_curve(dsfile, coords):
     ''' Import a pkl file, average the frequency axis, return the times and the light curve '''
     ds = np.load(dsfile, allow_pickle=True)
+    stem = Path(dsfile).stem
 # Barycentre times
     telescope = ds["TELESCOPE"]
     if telescope == "ASKAP":
@@ -71,6 +72,12 @@ def make_light_curve(dsfile, coords):
         loc = EarthLocation.of_site(telescope)
     times = Time(ds["TIMES"]/(24*3600), scale='utc', format='mjd', location=loc)
     bary_tt = times.light_travel_time(coords, kind="barycentric")
+# One of the MeerKAT observations has an airplane fly through the first 50 seconds
+    if stem == "CB1716830412":
+        ds["DS"][0:50,:,:] = np.nan
+# This one too!!
+    if stem == "CB1636329974":
+        ds["DS"][0:25,:,:] = np.nan
 
 # Do some RFI flagging
     It = np.real(ds["DS"][:,:,0]+ds["DS"][:,:,3])/2
@@ -96,15 +103,14 @@ def make_light_curve(dsfile, coords):
     ax.set_ylabel("standard deviation - poly offset")
     ax.set_xlabel("channel index")
     ax.axhline(med_spec_std+1.5*std_spec_std, color='red')
-    stem = Path(dsfile).stem
     fig.savefig(f'sanity_check_{stem}.png', bbox_inches="tight")
 
     lc = np.nanmean(It[:,(spec_std-p(xrange))<(med_spec_std+1.5*std_spec_std)], axis=1)
 
 # Remove any time-dependent slow variation (esp. MeerKAT data)
-    if telescope == "MeerKAT" and len(times)>100:
+    if telescope == "MeerKAT" and stem[0:12]=="CB1652551867":
 # It's the discovery observation and we need to do a lot of baseline removal
-        print(f"derippling {dsfile}")
+        print(f"derippling (long) {dsfile}")
         lc = deripple_long(times.mjd*24*3600, lc)
     else:
         print(f"derippling {dsfile}")
@@ -305,7 +311,7 @@ def plot_folded_lightcurves(
     return ax
 
 def deripple_short(t, lc):
-    deg = 3
+    deg = 9
     p = np.polynomial.Polynomial.fit(t[~np.isnan(lc)], lc[~np.isnan(lc)], deg=deg)
     return lc - p(t)
 
@@ -452,11 +458,13 @@ def main():
     # MeerKAT data -- currently just two pkls
     # Preprocessing means applying the primary beam
     dynspecs_m = ["./dynspec/1652551867-sdp-l0_2026-05-22T14-51-05_zBI_nominbl.pkl", "./dynspec/1656147142-sdp-l0_2026-06-08T16-46-06_bOB.pkl"]
+    dynspecs_m = glob.glob("./dynspec/1*pkl")
     
     if MKTPBCorr is True:
         for dsfile in dynspecs_m:
             ds = np.load(dsfile, allow_pickle=True)
             cbid = int(Path(dsfile).stem[0:10])
+            print(cbid)
              
             pb_vals = []
     # TODO improve efficiency
@@ -491,15 +499,20 @@ def main():
         colors.append('black')
 
     for pkl in dynspecs_m:
+        stem = Path(pkl).stem
         print(f"Making light curve from {pkl}")
         t, l, fc = make_light_curve(pkl, J1555.coord)
         tstarts.append(t[0].mjd)
         obslengths.append(24*60*(t[-1].mjd - t[0].mjd))
         ts.append(t)
-        lcs.append(l)
         maxs.append(np.nanmax(l))
         rmss.append(np.nanstd(l))
         freqs.append(fc)
+        if stem == "CB1716830412":
+# This one has such high noise that it blows up the light curve plot, so bring it down just for plotting
+            lcs.append(l/100)
+        else:
+            lcs.append(l)
         colors.append('purple')
 
     ids = np.concatenate([sbids, cbids])
@@ -527,24 +540,24 @@ def main():
 # The first few observations are very long
     ax1 = plot_folded_lightcurves(
         ax1,
-        ts[0:9],
-        lcs[0:9],
-        colors[0:9],
+        ts[0:19],
+        lcs[0:19],
+        colors[0:19],
         source=J1555
     )
 # The rest are short
     ax2 = plot_folded_lightcurves(
         ax2,
-        ts[9:25],
-        lcs[9:25],
-        colors[9:25],
+        ts[19:35],
+        lcs[19:35],
+        colors[19:35],
         source=J1555
     )
     ax3 = plot_folded_lightcurves(
         ax3,
-        ts[25:],
-        lcs[25:],
-        colors[25:],
+        ts[35:],
+        lcs[35:],
+        colors[35:],
         source=J1555
     )
     fig.tight_layout()
