@@ -577,20 +577,20 @@ def main():
 # Upper limits as a function of time
     fig = plt.figure(figsize=(17*cm,5*cm))
     ax = fig.add_subplot(111)
-    for ts, rms, m, c, f in zip(tstarts, rmss, maxs, colors, freqs):
+    for ts, rms, m, c, f, i in zip(tstarts, rmss, maxs, colors, freqs, ids):
 # Skip that one point that is useless
         if rms < 50:
             if m / rms > 8:
-                y = m*(f/CALFREQ)**(SPECIND)
-                yr = rms*(f/CALFREQ)**(SPECIND)
+                y = m*(CALFREQ/f)**(SPECIND)
+                yr = rms*(CALFREQ/f)**(SPECIND)
                 ax.scatter(ts, y, color=c, marker='*', s=8)
                 ax.errorbar(ts, y, yerr=rms, color=c, elinewidth=0.5)
             else:
-                yval = (3*rms)*(f/CALFREQ)**(SPECIND)
+                yval = (3*rms)*(CALFREQ/f)**(SPECIND)
                 ax.scatter(ts, yval, marker='v', color=c, s=8)
     ax.set_xlabel("MJD")
     ax.set_ylabel("Flux density (mJy)")
-    legend_elements = [Line2D([0], [0], lw=0, markersize=4, markerfacecolor='none', markeredgecolor='k', marker='v', label='1-$\sigma$ RMS'),
+    legend_elements = [Line2D([0], [0], lw=0, markersize=4, markerfacecolor='none', markeredgecolor='k', marker='v', label='3-$\sigma$ upper limit'),
                        Line2D([0], [0], lw=0, markersize=4, markerfacecolor='none', markeredgecolor='k', marker='*', label='Detections\n(brightest pulse)')]
     ax.legend(loc=1, handles=legend_elements)
     fig.savefig("Archival_upper_limits.pdf", bbox_inches="tight")
