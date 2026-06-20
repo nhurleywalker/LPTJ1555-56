@@ -590,7 +590,7 @@ def main():
                 ax.scatter(ts, yval, marker='v', color=c, s=8)
     ax.set_xlabel("MJD")
     ax.set_ylabel("Flux density (mJy)")
-    legend_elements = [Line2D([0], [0], lw=0, markersize=4, markerfacecolor='none', markeredgecolor='k', marker='v', label='3-$\sigma$ upper limit'),
+    legend_elements = [Line2D([0], [0], lw=0, markersize=4, markerfacecolor='none', markeredgecolor='k', marker='v', label='3-$\sigma$ upper limits'),
                        Line2D([0], [0], lw=0, markersize=4, markerfacecolor='none', markeredgecolor='k', marker='*', label='Detections\n(brightest pulse)')]
     ax.legend(loc=1, handles=legend_elements)
     fig.savefig("Archival_upper_limits.pdf", bbox_inches="tight")
