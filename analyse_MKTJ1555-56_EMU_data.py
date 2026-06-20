@@ -21,15 +21,16 @@ makeDynspec = False
 makeLightcurves = False
 makePaperDS = False
 makeFold = False
-# NB: if you want to makeRM or makePhaseBin, you must also makeFold
+# NB: if you want to makePA or makeRM or makePhaseBin, you must also makeFold
+makePA = True
 makeRM = False
 makePhaseBin = False
 debugPoly = False
 makeJointIQUV = False
 makeJointSpectrum = False
-makeSpikySpectrum = True
-tryBandSplit = True
-makeACF = False
+makeSpikySpectrum = False
+tryBandSplit = False
+makeACF = True
 
 cm = 1/2.54  # centimeters in inches
 # Figure font size
@@ -100,6 +101,16 @@ def make_lightcurve(times, lc, vmin, vmax, lw, color, alpha, label, outname, off
     ax.set_xlim(t[0], t[-1])
     ax.legend(loc=1)
     fig.savefig(outname, bbox_inches="tight")
+
+# To unwrap phases
+def unwrap(x):
+    if x < 0 :
+        xr = x + 360
+    else:
+        xr = x
+    return xr
+vunwrap = np.vectorize(unwrap, otypes=[float])
+
 
 XX = 0
 XY = 1
@@ -421,6 +432,9 @@ if makePaperDS:
 # Save EMU data for Emil
 out = np.array([times_a[~np.isnan(ilc_a)]/(24*3600), ilc_a[~np.isnan(ilc_a)], np.nanstd(ilc_a)*np.ones(len(ilc_a[~np.isnan(ilc_a)]))])
 np.savetxt("ASKAP_StokesI_light_curve.txt", out.T, fmt=['%5.8f', '%0.6f', '%0.5f'])
+# Print a representative noise value for Scott -- use Stokes Q because it has very little signal
+rms = 1000*np.nanstd(qlc_a)
+print(f"Typical noise of EMU light curves is {rms:2.1f}mJy/beam")
 
 # MeerKAT data - basic transforms
 #It_m = np.real((mkt["DS"][:,:,XX]+mkt["DS"][:,:,YY]))/2
@@ -694,6 +708,11 @@ ulc_m[seg1_end:seg1_end+b] = np.nan
 ulc_m[seg2_end-b:seg2_end] = np.nan
 vlc_m[seg1_end:seg1_end+b] = np.nan
 vlc_m[seg2_end-b:seg2_end] = np.nan
+
+# This segment is nice and clean so let's estimate the RMS noise
+rms = 1000*np.nanstd(ilc_m[seg1_end:seg2_end])
+print(f"Typical noise of MeerKAT light curves is {rms:2.1f}mJy/beam")
+
 
 # Segment 3
 deg = 6
@@ -1069,8 +1088,54 @@ if makeFold is True:
     print(f"Successfully stacked {n_p:2.2f} periods, boosting S/N by {np.sqrt(n_p):2.2f}")
     print(f"Main pulse is about {len_mp:2.0f}s wide.")
     print(f"Inter-pulse is about {len_ip:2.0f}s wide.")
+    print(f"Maximum linear polarisation of main (broad) pulse is {np.nanmax(L_frac[ind1]):3.0f}%")
+    print(f"Maximum linear polarisation of inter (narrow) pulse is {np.nanmax(L_frac[ind2]):3.0f}%")
+    print(f"Maximum absolute circular polarisation of main (broad) pulse is {np.nanmax(np.abs(V_frac[ind1])):3.0f}%")
+    print(f"Maximum absolute circular polarisation of inter (narrow) pulse is {np.nanmax(np.abs(V_frac[ind2])):3.0f}%")
     fig.savefig("Folded_EMU_light_curve.pdf", bbox_inches="tight")
 
+    if makePA is True:
+        ind = np.logical_and(phase>phase_start, phase<phase_end)
+        I = ilc_a[ind]
+        U = ulc_a[ind]
+        Q = qlc_a[ind]
+        pa = 180.+np.degrees(0.5*np.arctan2(U,Q))
+        L = np.sqrt(U**2 + Q**2)
+        rms = np.nanstd(Q) # less signal here
+        err_pa = np.degrees(rms / (2*L))
+        fig = plt.figure(figsize=(5,5))
+# Squish all the data together so we can actually see it
+        ax1 = fig.add_subplot(211)
+        ax1.plot(1000*I, lw=0.5, alpha=0.8, color=color["I"], label="I")
+        ax1.plot(1000*Q, lw=0.5, alpha=0.8, color=color["Q"], label="Q")
+        ax1.plot(1000*U, lw=0.5, alpha=0.8, color=color["U"], label="U")
+        ax1.set_ylabel("Flux density / mJy")
+        ax1.axhline(0, lw=0.5, color='black', alpha=0.5)
+        ax1.axhspan(-1000*rms, +1000*rms, color='blue', alpha=0.1, label='$\sigma_\mathrm{off}$')
+        ax1.legend(loc=1)
+        ax2 = fig.add_subplot(212)
+        ok = err_pa < np.degrees(0.15)
+        ax2.errorbar(x=np.arange(0,(len(pa)))[ok],y=pa[ok], yerr=err_pa[ok], lw=0, elinewidth=0.5)
+        ax2.scatter(x=np.arange(0,(len(pa)))[ok], y=pa[ok], s=1)
+        ax2.axhline(142., color='red', alpha=0.5)
+        ax2.set_ylabel("Polarization angle ($^\circ$)")
+        ax2.set_xlabel("Time index")
+        ax2.set_xlim(ax1.get_xlim())
+        #ax2.set_ylim(0, 360)
+        #ax2.axhline(45, lw=0.5, ls=":", color='red', alpha=0.5, label='45$^\circ$')
+        #ax2.axhline(360-45, lw=0.5, ls="-", color='red', alpha=0.5, label='360-45$^\circ$')
+        #ax2.legend()
+#        ok_ind = np.argwhere(err_pa < np.degrees(0.15))
+#        ind2 = np.argwhere(pa[ok] < 150)
+#        for i in ind2:
+#             ax1.axvline(ok_ind[i], color='k', alpha=0.5, lw=0.5)
+#             ax2.axvline(ok_ind[i], color='k', alpha=0.5, lw=0.5)
+        
+        fig.savefig("phase_wrt_index.png", bbox_inches="tight", dpi=300)
+
+        out = np.array([times_a[ind], I, Q, U, L, pa, err_pa, rms*np.ones(len(I))])
+
+        np.savetxt("EMU_IQU_light_curves.txt", out.T, header="MJDsec I Q U L PA err_PA err_S")
 
     if makeRM is True:
 # Try to fit the RM from the highest S/N phase bins in the EMU data
@@ -1124,7 +1189,7 @@ if makeFold is True:
         ax.axhline(np.nanmean(1000*V_pulse), color=color['V'], lw=0.5)
         ax.set_ylabel("Weighted brightness (mJy)")
         ax.set_xlabel("Frequency / GHz")
-        ax.set_ylim(-20, 20)
+        #ax.set_ylim(-20, 20)
         ax.legend()
         fig.savefig("EMU_weighted_Stokes_spectra.pdf", bbox_inches="tight")
         fig.savefig("EMU_weighted_Stokes_spectra.png", bbox_inches="tight")
@@ -1338,7 +1403,6 @@ ax.set_xlabel("Phase")
 #ax.legend(loc=1)
 fig.savefig("Ephemeris_lightcurve.png", bbox_inches="tight")
 
-
 if makeACF is True:
     # Similar to the above, just plot the interesting pulses, and their ACFs
     # Plotting to find out what the interesting pulses are
@@ -1363,6 +1427,16 @@ if makeACF is True:
     nsec = 200
     ind = np.logical_and(np.logical_and(phase>phase_start, phase<phase_end), pulsenums==n)
     ax1.plot(times_az[ind], 1000*ilc_a[ind], color=color["I"], alpha=0.8, lw=0.5)
+# Representative error bar
+    ax1.errorbar(
+        3775, 27.5, 
+        yerr=2,
+        fmt='none', 
+        ecolor='black', 
+        elinewidth=1.5, 
+        capsize=4, 
+        capthick=1.5
+    )
     ax1.set_ylabel("Flux density / mJy")
     ax1.set_xlabel("Time / s")
     ax1.set_title("Pulse 2: ASKAP")
@@ -1383,6 +1457,15 @@ if makeACF is True:
     nsec = 200
     ind = np.logical_and(np.logical_and(phase>phase_start, phase<phase_end), pulsenums==n)
     ax3.plot(times_az[ind], 1000*ilc_a[ind], color=color["I"], alpha=0.8, lw=0.5)
+    ax3.errorbar(
+        11270, 17.5, 
+        yerr=2,
+        fmt='none', 
+        ecolor='black', 
+        elinewidth=1.5, 
+        capsize=4, 
+        capthick=1.5
+    )
     ax3.set_xlabel("Time / s")
     ax3.set_title("Pulse 4: ASKAP")
     ax4 = fig.add_subplot(235)
@@ -1401,9 +1484,18 @@ if makeACF is True:
     n = 13
     nsec = 150
     ind = np.logical_and(np.logical_and(np.logical_and(phase_m>phase_start, phase_m<phase_end), pulsenums_m==n), ~np.isnan(ilc_m))
-    ax5.plot(times_mz[ind], 1000*ilc_m[ind], color=color["I"], alpha=0.8, lw=0.5)
+    ax5.plot(times_mz[ind], 1000*ilc_m[ind], color='purple', alpha=0.8, lw=0.5)
     ax5.set_xlabel("Time / s")
     ax5.set_title("Pulse 13: MeerKAT")
+    ax5.errorbar(
+        16915, 11.75, 
+        yerr=0.8,
+        fmt='none', 
+        ecolor='purple',
+        elinewidth=1.5, 
+        capsize=4, 
+        capthick=1.5
+    )
     ax6 = fig.add_subplot(236)
     acorr = np.correlate(ilc_m[ind], ilc_m[ind], 'full')[len(ilc_m[ind])-1:]
     t = ts*np.arange(0,len(acorr),1)

@@ -24,6 +24,11 @@ from primary_beams import GaussianPB, get_beam_pos, MKCosBeam, get_beam_pos_mkt
 #logger = logging.getLogger(__name__)
 cm = 1/2.54
 
+# Spectral index to use for correcting to same flux density scale
+SPECIND = -1.5
+# Which frequency to correct to
+CALFREQ = 1.e9 # (1 GHz)
+
 # If you've run this already, you can make these False and save some time
 ASKAPPBCorr = False
 MKTPBCorr = False
@@ -572,12 +577,17 @@ def main():
 # Upper limits as a function of time
     fig = plt.figure(figsize=(17*cm,5*cm))
     ax = fig.add_subplot(111)
-    for ts, rms, m, c in zip(tstarts, rmss, maxs, colors):
-        if m / rms > 8:
-            ax.scatter(ts, m, color=c, marker='*', s=8)
-            ax.errorbar(ts, m, yerr=rms, color=c, elinewidth=0.5)
-        else:
-            ax.scatter(ts, rms, marker='v', color=c, s=8)
+    for ts, rms, m, c, f in zip(tstarts, rmss, maxs, colors, freqs):
+# Skip that one point that is useless
+        if rms < 50:
+            if m / rms > 8:
+                y = m*(f/CALFREQ)**(SPECIND)
+                yr = rms*(f/CALFREQ)**(SPECIND)
+                ax.scatter(ts, y, color=c, marker='*', s=8)
+                ax.errorbar(ts, y, yerr=rms, color=c, elinewidth=0.5)
+            else:
+                yval = (3*rms)*(f/CALFREQ)**(SPECIND)
+                ax.scatter(ts, yval, marker='v', color=c, s=8)
     ax.set_xlabel("MJD")
     ax.set_ylabel("Flux density (mJy)")
     legend_elements = [Line2D([0], [0], lw=0, markersize=4, markerfacecolor='none', markeredgecolor='k', marker='v', label='1-$\sigma$ RMS'),
