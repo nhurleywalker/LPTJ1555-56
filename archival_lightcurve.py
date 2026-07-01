@@ -3,6 +3,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Tuple
+import os
  
 import pickle
 import astropy.units as u
@@ -30,7 +31,7 @@ SPECIND = -1.5
 CALFREQ = 1.e9 # (1 GHz)
 
 # If you've run this already, you can make these False and save some time
-ASKAPPBCorr = False
+ASKAPPBCorr = True
 MKTPBCorr = False
 
 PARAMS = {
@@ -426,36 +427,42 @@ def main():
         dynspecs = sorted(glob.glob("./dynspec/science*.pkl"))
         sbids = np.unique(np.array([int(dsfile.split("SB")[1][0:5].replace("_","")) for dsfile in dynspecs]))
         for sbid in sbids:
-            dynspecs = glob.glob(f"./dynspec/*SB{sbid}*pkl")
-            ds_example = np.load(dynspecs[0], allow_pickle=True)
-            final_array = np.empty((ds_example["DS"].shape[0],ds_example["DS"].shape[1],ds_example["DS"].shape[2],len(dynspecs)))
-            weights_array = np.empty((ds_example["DS"].shape[1],len(dynspecs)))
-            for i in range(0, len(dynspecs)):
-                dsfile = dynspecs[i]
-                ds = np.load(dsfile, allow_pickle=True)
-                beam = dsfile.split("beam")[1][0:2]
-    # Survey is always after the SBID like:
-    #scienceData.VAST_1552-56.SB81799.VAST_1552-56.beam01_averaged_cal.leakage.pkl
-    #scienceData_SB8676_RACS_1552-56A.beam01_averaged_cal.pkl
-    # But sometimes it's an underscore and sometimes a full stop -- so replace at the critical point
-                survey = dsfile.split("SB")[1].replace("_", ".").split(".")[1]
-    # Apply frequency-dependent primary beam 
-                pb_vals = []
-# TODO improve efficiency
-                for freq in ds["FREQS"]:
-                    pb = GaussianPB(frequency = freq*1.e9)
-                    sep = get_beam_pos(survey, beam).separation(J1555.coord)
-                    pb_vals.append(pb.evaluate(sep.rad, freq=freq))
-        # This is just frequencies for each dynamic spectrum
-                weights_array[:,i] = np.array(pb_vals) 
-                final_array[:,:,:,i] = ds["DS"]
-    # Correcting for the primary beam means multiplying by the primary beam correction (which is inversely proportional to distance to the phase centre)
-    # Weighting by the primary beam means dividing by the primary beam correction (as big numbers are bad!)
-    # So, effectively, those terms cancel out, and at the end we want to simply divide by the sum of the weights
+            outname = f'./averaged_dynspec/SB{sbid:05d}.pkl'
+            if not os.path.exists(outname):
+                print(f"Correcting {sbid}")
+                dynspecs = glob.glob(f"./dynspec/*SB{sbid}*pkl")
+                ds_example = np.load(dynspecs[0], allow_pickle=True)
+                final_array = np.empty((ds_example["DS"].shape[0],ds_example["DS"].shape[1],ds_example["DS"].shape[2],len(dynspecs)))
+                weights_array = np.empty((ds_example["DS"].shape[1],len(dynspecs)))
+                for i in range(0, len(dynspecs)):
+                    dsfile = dynspecs[i]
+                    ds = np.load(dsfile, allow_pickle=True)
+                    beam = dsfile.split("beam")[1][0:2]
+        # Survey is always after the SBID like:
+        #scienceData.VAST_1552-56.SB81799.VAST_1552-56.beam01_averaged_cal.leakage.pkl
+        #scienceData_SB8676_RACS_1552-56A.beam01_averaged_cal.pkl
+        # But sometimes it's an underscore and sometimes a full stop -- so replace at the critical point
+                    survey = dsfile.split("SB")[1].replace("_", ".").split(".")[1]
+        # Apply frequency-dependent primary beam 
+                    pb_vals = []
+    # TODO improve efficiency
+                    for freq in ds["FREQS"]:
+                        pb = GaussianPB(frequency = freq*1.e9)
+                        sep = get_beam_pos(survey, beam).separation(J1555.coord)
+                        pb_vals.append(pb.evaluate(sep.rad, freq=freq))
+            # This is just frequencies for each dynamic spectrum
+                    weights_array[:,i] = np.array(pb_vals) 
+                    final_array[:,:,:,i] = ds["DS"]
+        # Correcting for the primary beam means multiplying by the primary beam correction (which is inversely proportional to distance to the phase centre)
+        # Weighting by the primary beam means dividing by the primary beam correction (as big numbers are bad!)
+        # So, effectively, those terms cancel out, and at the end we want to simply divide by the sum of the weights
 
-            ds_example["DS"][:,:,:] = np.nansum(final_array, axis=3) / np.nansum(np.tile(weights_array[None, :, None, :], (ds_example["DS"].shape[0], 1, 4, 1)), axis=3)
-            with open(f'./averaged_dynspec/SB{sbid:05d}.pkl', 'wb') as file:
-                pickle.dump(ds_example, file)
+                ds_example["DS"][:,:,:] = np.nansum(final_array, axis=3) / np.nansum(np.tile(weights_array[None, :, None, :], (ds_example["DS"].shape[0], 1, 4, 1)), axis=3)
+# SBID 40625 was run through FixMS but all of the other SBIDs were not, so they need to be multiplied by a factor of 2 to match other telescope Stokes conventions (note all the PAs will still be wrong, but there is only noise in these data, so it's fine)
+                if sbid != 40625:
+                    ds_example["DS"] *= 2
+                with open(f'./averaged_dynspec/SB{sbid:05d}.pkl', 'wb') as file:
+                    pickle.dump(ds_example, file)
 
     dynspecs = sorted(glob.glob("./averaged_dynspec/SB*.pkl"))
     sbids = np.array([int(Path(dsfile).stem.split("SB")[1]) for dsfile in dynspecs])
@@ -594,6 +601,10 @@ def main():
                        Line2D([0], [0], lw=0, markersize=4, markerfacecolor='none', markeredgecolor='k', marker='*', label='Detections\n(brightest pulse)')]
     ax.legend(loc=1, handles=legend_elements)
     fig.savefig("Archival_upper_limits.pdf", bbox_inches="tight")
+
+# Save as a text file
+    out = np.array([ids, tstarts, rmss, maxs, np.array(freqs)/1.e9, np.array(rmss)*(CALFREQ/np.array(freqs))**(SPECIND), np.array(maxs)*(CALFREQ/np.array(freqs))**SPECIND])
+    np.savetxt("Archival_measurements.csv", out.T, fmt=['%s', '%5.8f', '%0.6f', '%0.6f', '%1.3f', '%0.6f', '%0.6f'], delimiter=',', header='#ID,MJD,RMS,MAX,F_GHz,RMS_scaled,MAX_scaled')
 
 # Make a LaTeX table output
     times = Time(tstarts, format='mjd', scale='utc')
