@@ -112,6 +112,8 @@ def make_light_curve(dsfile, coords):
     fig.savefig(f'sanity_check_{stem}.png', bbox_inches="tight")
 
     lc = np.nanmean(It[:,(spec_std-p(xrange))<(med_spec_std+1.5*std_spec_std)], axis=1)
+# Set to NaN any exactly zero values
+    lc[lc==0.0] = np.nan
 
 # Remove any time-dependent slow variation (esp. MeerKAT data)
     if telescope == "MeerKAT" and stem[0:12]=="CB1652551867":
@@ -317,7 +319,7 @@ def plot_folded_lightcurves(
     return ax
 
 def deripple_short(t, lc):
-    deg = 9
+    deg = 3
     p = np.polynomial.Polynomial.fit(t[~np.isnan(lc)], lc[~np.isnan(lc)], deg=deg)
     return lc - p(t)
 
