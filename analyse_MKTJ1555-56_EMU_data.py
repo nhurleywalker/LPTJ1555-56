@@ -22,13 +22,15 @@ makeLightcurves = False
 makePaperDS = False
 makeFold = False
 # NB: if you want to makePA or makeRM or makePhaseBin, you must also makeFold
-makePA = True
+makePA = False
 makeRM = False
 makePhaseBin = False
+makeIPSpec = False
 debugPoly = False
 makeJointIQUV = False
 makeJointSpectrum = False
 makeSpikySpectrum = False
+makeIPSpectrum = False
 tryBandSplit = False
 makeACF = True
 
@@ -429,8 +431,8 @@ if makePaperDS:
 
     fig.savefig("ASKAP_dynamic_spectra_lcs.pdf", bbox_inches="tight", dpi=300)
 
-# Save EMU data for Emil
-out = np.array([times_a[~np.isnan(ilc_a)]/(24*3600), ilc_a[~np.isnan(ilc_a)], np.nanstd(ilc_a)*np.ones(len(ilc_a[~np.isnan(ilc_a)]))])
+# Save EMU data for Emil -- use Stokes Q as it has less signal
+out = np.array([times_a[~np.isnan(ilc_a)]/(24*3600), ilc_a[~np.isnan(ilc_a)], np.nanstd(qlc_a)*np.ones(len(ilc_a[~np.isnan(ilc_a)]))])
 np.savetxt("ASKAP_StokesI_light_curve.txt", out.T, fmt=['%5.8f', '%0.6f', '%0.5f'])
 # Print a representative noise value for Scott -- use Stokes Q because it has very little signal
 rms = 1000*np.nanstd(qlc_a)
@@ -1313,6 +1315,122 @@ if makeFold is True:
             out = np.array([freqs_a[~np.isnan(I_pulse)]*1.e9, I_pulse[~np.isnan(I_pulse)], Q_pulse[~np.isnan(I_pulse)], U_pulse[~np.isnan(I_pulse)], rms_arr[~np.isnan(I_pulse)], rms_arr[~np.isnan(I_pulse)], rms_arr[~np.isnan(I_pulse)]])
 
             np.savetxt(f"EMU_folded_IQU_spectrum_phasebin{phase_start:1.2f}.txt", out.T)
+
+    if makeIPSpec is True:
+# Now try to do the interpulse
+        phase_start = 0.04
+        phase_end = 0.06
+        ind = np.logical_and(phase>phase_start, phase<phase_end)
+        Ilc_pulse = ilc_a[ind]
+   
+        #Sanity check
+        fig = plt.figure(figsize=(5,5))
+        ax = fig.add_subplot(111)
+        ax.scatter(phase[ind], Ilc_pulse)
+        ax.set_xlabel("Phase")
+        ax.set_ylabel("Stokes I light curve just of inter pulse")
+        fig.savefig("test_ipulse_capture.png", bbox_inches="tight")
+
+        weights = np.tile(Ilc_pulse, (Qt.shape[1],1)).T
+        weights[weights<0] = 0.
+    # Normalise the weights to 1 as this will be useful later
+        weights /= np.nanmax(weights)
+
+        I_pulse = np.nansum(It[ind,:]*weights, axis=0)/np.nansum(weights,axis=0)
+    # Removes RFI-flagged area
+        I_pulse[I_pulse==0.0] = np.nan
+
+    # RMS is just some generic signal-free area
+        rms = np.nanstd(It[np.logical_and(phase>0.2, phase<0.3),:])
+        # Shape of weights is (phasebin, frequency)
+    # RMS drops by the sqrt of the number of samples, if everything is equally weighted
+    # But since the weights are fractional, it only drops by the sqrt of the sum of the weights
+        rms /= np.sqrt(np.nansum(weights, axis=0))
+        rms_arr = rms*np.ones(len(I_pulse))
+
+        fig = plt.figure(figsize=(8*cm,8*cm))
+        ax = fig.add_subplot(111)
+        ax.scatter(freqs_a, 1000*I_pulse, color=color['I'], alpha=0.8, marker='.', s=4, lw=0.5, zorder=10, label="Stokes I")
+        ax.errorbar(freqs_a, 1000*I_pulse, yerr=1000*rms_arr, color=color['I'], alpha=0.8, elinewidth=0.5, lw=0, zorder=5)
+        ax.axhline(np.nanmean(1000*I_pulse), color=color['I'], lw=0.5)
+        ax.set_ylabel("Weighted brightness (mJy)")
+        ax.set_xlabel("Frequency / GHz")
+        #ax.set_ylim(-20, 20)
+        ax.legend()
+        fig.savefig("EMU_IP_weighted_Stokes_spectra.pdf", bbox_inches="tight")
+        fig.savefig("EMU_IP_weighted_Stokes_spectra.png", bbox_inches="tight")
+
+        f = freqs_a[~np.isnan(I_pulse)]
+        r = rms_arr[~np.isnan(I_pulse)]
+        I = I_pulse[~np.isnan(I_pulse)]
+
+        n_b = np.array([len(fr) for fr in np.array_split(f, 5)])
+        f_b = np.array([np.mean(fr) for fr in np.array_split(f, 5)])
+        r_b = np.array([np.mean(rr) for rr in np.array_split(r, 5)])/np.sqrt(n_b)
+        I_b = np.array([np.mean(ir) for ir in np.array_split(I, 5)])
+
+        model = (pl, (1000*np.nanmedian(I_b), -0.7), 'Power Law')
+
+        nu = np.geomspace(1.3, 1.45, 100)
+        fit_func = model[0]
+        fit_p0 = model[1]
+        fit_res = curve_fit(
+            fit_func,
+            f_b,
+            1000*I_b,
+            fit_p0,
+            sigma=1000*r_b,
+            absolute_sigma=True
+        )
+
+        best_p = fit_res[0]
+        pla = best_p[1]
+        plS = pl(1, *best_p)
+
+        covar = fit_res[1]
+        err_p = np.sqrt(np.diag(covar))
+
+        print("Power-law fit parameters: S at 1 GHz = {0:3.2f}+/-{2:3.2f}mJy, alpha = {1:3.2f}+/-{3:3.2f}".format(plS, pla, err_p[0], err_p[1]))
+
+        no_samps = 1000
+        samps = np.random.multivariate_normal(
+            fit_res[0], fit_res[1], size=no_samps
+        ).swapaxes(0,1)
+
+        models = pl(
+            nu[:, None],
+            *samps
+        )
+        q16, q50, q84 = np.percentile(models, [16, 50, 84], axis=1)
+
+        fig = plt.figure(figsize=(8*cm,8*cm))
+        ax = fig.add_subplot(111)
+        ax.scatter(freqs_a, 1000*I_pulse, color=color['I'], alpha=0.2, marker='.', s=4, lw=0.5, zorder=10, label="Stokes I")
+        ax.scatter(f_b, 1000*I_b, color=color['I'], alpha=0.8, marker='s', s=6, lw=0.5, zorder=10, label="Stokes I")
+        ax.errorbar(f_b, 1000*I_b, yerr=1000*r_b, color=color['I'], alpha=0.8, elinewidth=0.5, lw=0, zorder=5)
+        ax.plot(
+            nu,
+            q50,
+            lw=0.5,
+            color='red',
+        )
+        ax.fill_between(
+            nu,
+            q16, q84,
+            alpha=0.3,
+            color='red'
+        )
+        ax.set_ylabel("Weighted brightness (mJy)")
+        ax.set_xlabel("Frequency / GHz")
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.yaxis.set_major_formatter(StrMethodFormatter("{x:.0f}"))
+        ax.yaxis.set_minor_formatter(StrMethodFormatter("{x:.0f}"))
+        ax.xaxis.set_major_formatter(StrMethodFormatter("{x:.2f}"))
+        ax.xaxis.set_minor_formatter(StrMethodFormatter("{x:.2f}"))
+        ax.set_ylim(8,16)
+        ax.yaxis.set_minor_locator(MultipleLocator(1))
+        fig.savefig("EMU_folded_Stokes_I_spectrum_interpulse.png", bbox_inches="tight", dpi=300)
 
     # Fold the MeerKAT data
     # TODO: Need to solve for the polarisation calibration AND apply a parallactic angle correction before this makese sense
