@@ -31,7 +31,7 @@ SPECIND = -1.5
 CALFREQ = 1.e9 # (1 GHz)
 
 # If you've run this already, you can make these False and save some time
-ASKAPPBCorr = True
+ASKAPPBCorr = False
 MKTPBCorr = False
 
 PARAMS = {
@@ -77,6 +77,7 @@ def make_light_curve(dsfile, coords):
     else:
         loc = EarthLocation.of_site(telescope)
     times = Time(ds["TIMES"]/(24*3600), scale='utc', format='mjd', location=loc)
+    tstart = times[0].mjd
     bary_tt = times.light_travel_time(coords, kind="barycentric")
 # One of the MeerKAT observations has an airplane fly through the first 50 seconds
     if stem == "CB1716830412":
@@ -125,7 +126,7 @@ def make_light_curve(dsfile, coords):
         lc = deripple_short(times.mjd*24*3600, lc)
 
 # Convert times to barycentred and light curve to mJy
-    return times.tdb + bary_tt, 1000*lc, ds["FREQS"][int(len(ds["FREQS"])/2)]
+    return times.tdb + bary_tt, 1000*lc, ds["FREQS"][int(len(ds["FREQS"])/2)], tstart
 
 def get_source() -> Source:
     # Derived from MeerKAT observations
@@ -502,8 +503,8 @@ def main():
     freqs = []
     for pkl in dynspecs:
         print(f"Making light curve from {pkl}")
-        t, l, fc = make_light_curve(pkl, J1555.coord)
-        tstarts.append(t[0].mjd)
+        t, l, fc, tstart = make_light_curve(pkl, J1555.coord)
+        tstarts.append(tstart)
         obslengths.append(24*60*(t[-1].mjd - t[0].mjd))
         ts.append(t)
         lcs.append(l)
@@ -515,8 +516,8 @@ def main():
     for pkl in dynspecs_m:
         stem = Path(pkl).stem
         print(f"Making light curve from {pkl}")
-        t, l, fc = make_light_curve(pkl, J1555.coord)
-        tstarts.append(t[0].mjd)
+        t, l, fc, tstart = make_light_curve(pkl, J1555.coord)
+        tstarts.append(tstart)
         obslengths.append(24*60*(t[-1].mjd - t[0].mjd))
         ts.append(t)
         maxs.append(np.nanmax(l))
