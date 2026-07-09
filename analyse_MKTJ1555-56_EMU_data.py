@@ -20,7 +20,7 @@ from primary_beams import GaussianPB, MKCosBeam, get_beam_pos_mkt
 makeDynspec = False
 makeLightcurves = False
 makePaperDS = False
-makeFold = False
+makeFold = True
 # NB: if you want to makePA or makeRM or makePhaseBin, you must also makeFold
 makePA = False
 makeRM = False
@@ -32,7 +32,7 @@ makeJointSpectrum = False
 makeSpikySpectrum = False
 makeIPSpectrum = False
 tryBandSplit = False
-makeACF = True
+makeACF = False
 
 cm = 1/2.54  # centimeters in inches
 # Figure font size
@@ -41,6 +41,10 @@ plt.rcParams.update({
 
 T0 = 59713.512505
 P = 62.2028 / (2*24*60) # minutes into days
+
+# Most up to date, from the paper
+T0 = 59713.42655646942
+P = 62.205893 / (2*24*60)
 
 source_sc = SkyCoord("15h55m43.69s -56d31m02.4s", frame='fk5')
 
@@ -51,8 +55,9 @@ beams_sc = SkyCoord(["15h58m56.563 -56d53m16.761", "15h55m36.850 -56d06m49.968"]
 a = 6
 
 # Phase of the main pulse 
-phase_start = 0.48
-phase_end = 0.56
+# New ephemeris is centred on the main pulse
+phase_start = 0.44 + 0.5
+phase_end = 0.55 + 0.5 - 1
 
 def ephem(n):
     return T0 + n*P
@@ -113,6 +118,20 @@ def unwrap(x):
     return xr
 vunwrap = np.vectorize(unwrap, otypes=[float])
 
+# To deal with stupid wrapovers
+def pwrap(x, num_bins, add=False):
+    if add is True:
+        result = np.hstack([x[int(num_bins/2):], x[:int(num_bins/2)]+1])
+    else:
+        result = np.hstack([x[int(num_bins/2):], x[:int(num_bins/2)]])
+    return result
+
+# To deal with bincount not dealing with NaNs
+def get_weighted_sum(N, W):
+    df = pd.DataFrame({
+        'values': N,
+        'weights': W })
+    return df.groupby('values')['weights'].sum()
 
 XX = 0
 XY = 1
@@ -1023,7 +1042,7 @@ if makeFold is True:
     # Put these into MJD (instead of MJD seconds)
     trange = times_a / (24*3600)
 
-    phase = np.mod(trange - T0 + P, 2*P)/(2*P)
+    phase = np.mod(trange - T0, 2*P)/(2*P)
     idx = np.argsort(phase)
 
     num_bins = 200
@@ -1032,12 +1051,13 @@ if makeFold is True:
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
     bin_indices = np.digitize(phase[idx], bin_edges) - 1
 
-    I_sums = np.bincount(bin_indices, weights=1000*ilc_a[idx], minlength=num_bins)
-    Q_sums = np.bincount(bin_indices, weights=1000*qlc_a[idx], minlength=num_bins)
-    U_sums = np.bincount(bin_indices, weights=1000*ulc_a[idx], minlength=num_bins)
-    V_sums = np.bincount(bin_indices, weights=1000*vlc_a[idx], minlength=num_bins)
-
     counts = np.bincount(bin_indices, minlength=num_bins)
+# Use this function to make sure NaNs don't ruin the light curve
+    I_sums = get_weighted_sum(bin_indices, 1000*ilc_a[idx])
+    Q_sums = get_weighted_sum(bin_indices, 1000*qlc_a[idx])
+    U_sums = get_weighted_sum(bin_indices, 1000*ulc_a[idx])
+    V_sums = get_weighted_sum(bin_indices, 1000*vlc_a[idx])
+
 
     # Prevent division by zero if a bin is empty
     I_binned_average = I_sums / np.where(counts == 0, 1, counts)
@@ -1045,49 +1065,199 @@ if makeFold is True:
     U_binned_average = U_sums / np.where(counts == 0, 1, counts)
     V_binned_average = V_sums / np.where(counts == 0, 1, counts)
     L_binned_average = np.sqrt(Q_binned_average**2 + U_binned_average**2)
-    L_frac = 100*L_binned_average/I_binned_average
-    V_frac = 100*(np.abs(V_binned_average)/I_binned_average)
-    T_frac = 100*np.sqrt((Q_binned_average**2 + U_binned_average**2 + V_binned_average**2)/(I_binned_average**2))
+    T_binned_average = np.sqrt(Q_binned_average**2 + U_binned_average**2 + V_binned_average**2)
 
-    phase_start_ip = 0.04
-    phase_end_ip = 0.057
-# Paper figure: aim for half an A4 column (8cm)
-    fig = plt.figure(figsize=(8*cm,8*cm))
-    ax1 = fig.add_subplot(211)
-    ax1.axvspan(phase_start, phase_end, alpha=0.1, color='grey')
-    ax1.axvspan(phase_start_ip, phase_end_ip, alpha=0.1, color='grey')
-    ax1.plot(bin_centers, I_binned_average, color=color['I'], alpha=0.8, lw=0.5, label="Stokes I")
-    ax1.plot(bin_centers, Q_binned_average, color=color['Q'], alpha=0.8, lw=0.5, label="Stokes Q")
-    ax1.plot(bin_centers, U_binned_average, color=color['U'], alpha=0.8, lw=0.5, label="Stokes U")
-    ax1.plot(bin_centers, V_binned_average, color=color['V'], alpha=0.8, lw=0.5, label="Stokes V")
+# Get a representative RMS
+    rms_start = 0.1
+    rms_end = 0.4
+    ind_rms = np.logical_and(bin_centers > rms_start, bin_centers < rms_end)
+    rms = np.nanstd(U_binned_average[ind_rms])
+
+    L_frac = 100*L_binned_average/I_binned_average
+    #V_frac = 100*np.abs(V_binned_average)/I_binned_average
+
+    V_frac = 100 * np.abs(V_binned_average) / I_binned_average
+    err_V_frac = 100 * np.sqrt(
+        (rms / I_binned_average)**2 +
+        (V_binned_average * rms / I_binned_average**2)**2
+    )
+
+    T_frac = 100*np.sqrt((Q_binned_average**2 + U_binned_average**2 + V_binned_average**2)/(I_binned_average**2))
+    #err_V_frac = np.abs(V_frac) * np.sqrt((rms/V_binned_average)**2 + (rms/I_binned_average)**2)
+    err_L = np.sqrt((rms*Q_binned_average/L_binned_average)**2 + (rms*U_binned_average/L_binned_average)**2)
+    err_L_frac = np.abs(L_frac) * np.sqrt((err_L/L_binned_average)**2 + (rms/I_binned_average)**2)
+    err_T = np.sqrt((rms*Q_binned_average/T_binned_average)**2 + (rms*U_binned_average/T_binned_average)**2 + (rms*T_binned_average)**2)
+    err_T_frac = T_frac * np.sqrt((err_T/T_binned_average)**2 + (rms/I_binned_average)**2)
+
+# sanity check
+    fig = plt.figure(figsize=(5,5))
+    ax = fig.add_subplot(111)
+    ax.scatter(T_frac, err_T_frac, color=color['T'])
+    ax.scatter(L_frac, err_L_frac, color=color['L'])
+    ax.scatter(V_frac, err_V_frac, color=color['V'])
+    ax.set_xlabel("value")
+    ax.set_ylabel("error")
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    fig.savefig("error_test.png", bbox_inches='tight')
+
+    phase_start_ip = 0.02 + 0.5
+    phase_end_ip = 0.055 + 0.5
+# Paper figure: will have to be two columns after redefinition of ephemeirs
+    fig = plt.figure(figsize=(16*cm,8*cm))
+    ax1 = fig.add_axes([0.1, 0.5, 0.5, 0.35])
+    ax1.axvspan(0, phase_end, alpha=0.1, color='grey')
+    ax1.axvspan(phase_start, phase_end+1, alpha=0.1, color='grey')
+    ax1.axvspan(phase_start+1, 2, alpha=0.1, color='grey')
+    ax1.axvspan(phase_start_ip, phase_end_ip, alpha=0.1, color='yellow')
+    ax1.axvspan(phase_start_ip+1, phase_end_ip+1, alpha=0.1, color='yellow')
+# Double everything so that you can plot phase 0 to 2 with no gaps
+    x = np.hstack([bin_centers, bin_centers +1])
+    yI = np.hstack([I_binned_average, I_binned_average])
+    yQ = np.hstack([Q_binned_average, Q_binned_average])
+    yU = np.hstack([U_binned_average, U_binned_average])
+    yV = np.hstack([V_binned_average, V_binned_average])
+    ax1.plot(x, yI, color=color['I'], alpha=0.8, lw=0.5, label="I")
+    ax1.plot(x, yQ, color=color['Q'], alpha=0.8, lw=0.5, label="Q")
+    ax1.plot(x, yU, color=color['U'], alpha=0.8, lw=0.5, label="U")
+    ax1.plot(x, yV, color=color['V'], alpha=0.8, lw=0.5, label="V")
+    ax1.set_xticklabels([])
     ax1.set_xlabel("Phase")
     ax1.set_ylabel("Mean brightness (mJy)")
-    ax1.set_xlim(0, 1)
+    ax1.set_xlim(0, 2)
     ax1.legend(loc=1)
-    ax2 = fig.add_subplot(212)
-    ax2.axvspan(phase_start, phase_end, alpha=0.1, color='grey')
-    ax2.axvspan(phase_start_ip, phase_end_ip, alpha=0.1, color='grey')
 
-    I_cut = 0.5 #mJy
+    ax2 = fig.add_axes([0.1, 0.1, 0.5, 0.35])
+    ax2.axvspan(0, phase_end, alpha=0.1, color='grey')
+    ax2.axvspan(phase_start, phase_end+1, alpha=0.1, color='grey')
+    ax2.axvspan(phase_start+1, 2, alpha=0.1, color='grey')
+    ax2.axvspan(phase_start_ip, phase_end_ip, alpha=0.1, color='yellow')
+    ax2.axvspan(phase_start_ip+1, phase_end_ip+1, alpha=0.1, color='yellow')
+    I_cut = 1 #mJy
   # Main pulse
-    ind1 = np.logical_and(np.abs(I_binned_average)>I_cut, np.logical_and(bin_centers > phase_start, bin_centers < phase_end))
+## Now that they've redefined the ephemeris to start in the middle of the main pulse, we have to use 'or'
+    #ind_mp = np.logical_and(bin_centers > phase_start, bin_centers < phase_end)
+    ind_mp = np.logical_or(bin_centers > phase_start, bin_centers < phase_end)
+# We will calculate this when we need it for ax4
+    #ind_mp_wide = np.logical_and(bin_centers > phase_start-0.05, bin_centers < phase_end+0.05)
+    ind1 = np.logical_and(np.abs(I_binned_average)>I_cut, ind_mp)
   # Little circularly polarised pulse
-    ind2 = np.logical_and(np.abs(I_binned_average)>I_cut, np.logical_and(bin_centers > phase_start_ip, bin_centers < phase_end_ip))
-    ax2.plot(bin_centers[ind1], L_frac[ind1], color=color['L'], alpha=0.8, lw=0.5, label="Linear")
-    ax2.plot(bin_centers[ind1], V_frac[ind1], color=color['V'], alpha=0.8, lw=0.5, label="Circular")
-    ax2.plot(bin_centers[ind1], T_frac[ind1], color=color['T'], alpha=0.8, lw=0.5, label="Total")
-    ax2.plot(bin_centers[ind2], L_frac[ind2], color=color['L'], alpha=0.8, lw=0.5)
-    ax2.plot(bin_centers[ind2], V_frac[ind2], color=color['V'], alpha=0.8, lw=0.5)
-    ax2.plot(bin_centers[ind2], T_frac[ind2], color=color['T'], alpha=0.8, lw=0.5)
+    ind_ip = np.logical_and(bin_centers > phase_start_ip, bin_centers < phase_end_ip)
+    ind_ip_wide = np.logical_and(bin_centers > phase_start_ip-0.05, bin_centers < phase_end_ip+0.05)
+    ind2 = np.logical_and(np.abs(I_binned_average)>I_cut, ind_ip)
+    ind2_wide = np.logical_and(np.abs(I_binned_average)>I_cut, ind_ip_wide)
+    ax2.scatter(bin_centers[ind1], T_frac[ind1], color=color['T'], alpha=0.8, lw=0, s=5, label="Total")
+    ax2.scatter(bin_centers[ind1]+1, T_frac[ind1], color=color['T'], alpha=0.8, lw=0, s=5)
+    ax2.scatter(bin_centers[ind2], T_frac[ind2], color=color['T'], alpha=0.8, lw=0, s=5)
+    ax2.scatter(bin_centers[ind2]+1, T_frac[ind2], color=color['T'], alpha=0.8, lw=0, s=5)
+    ax2.scatter(bin_centers[ind1], L_frac[ind1], color=color['L'], alpha=0.8, lw=0, s=5, marker='s', label="Linear")
+    ax2.errorbar(bin_centers[ind1], L_frac[ind1], yerr=err_L_frac[ind1], color=color['L'], alpha=0.8, lw=0, elinewidth=0.5, capsize=1, capthick=0.5)
+    ax2.scatter(bin_centers[ind1] + 1, L_frac[ind1], color=color['L'], alpha=0.8, lw=0, s=5, marker='s')
+    ax2.errorbar(bin_centers[ind1] + 1, L_frac[ind1], yerr=err_L_frac[ind1], color=color['L'], alpha=0.8, lw=0, elinewidth=0.5, capsize=1, capthick=0.5)
+    ax2.scatter(bin_centers[ind1], V_frac[ind1], color=color['V'], alpha=0.8, lw=0, s=8, marker='*', label="Circular")
+    ax2.errorbar(bin_centers[ind1], V_frac[ind1], yerr=err_V_frac[ind1], color=color['V'], alpha=0.8, lw=0, elinewidth=0.5, capsize=1, capthick=0.5)
+    ax2.scatter(bin_centers[ind1]+1, V_frac[ind1], color=color['V'], alpha=0.8, lw=0, s=8, marker='*')
+    ax2.errorbar(bin_centers[ind1]+1, V_frac[ind1], yerr=err_V_frac[ind1], color=color['V'], alpha=0.8, lw=0, elinewidth=0.5, capsize=1, capthick=0.5)
+    ax2.scatter(bin_centers[ind2], L_frac[ind2], color=color['L'], alpha=0.8, lw=0, s=5, marker='s')
+    ax2.errorbar(bin_centers[ind2], L_frac[ind2], yerr=err_L_frac[ind2], color=color['L'], alpha=0.8, lw=0, elinewidth=0.5, capsize=1, capthick=0.5)
+    ax2.scatter(bin_centers[ind2]+1, L_frac[ind2], color=color['L'], alpha=0.8, lw=0, s=5, marker='s')
+    ax2.errorbar(bin_centers[ind2]+1, L_frac[ind2], yerr=err_L_frac[ind2], color=color['L'], alpha=0.8, lw=0, elinewidth=0.5, capsize=1, capthick=0.5)
+    ax2.scatter(bin_centers[ind2], V_frac[ind2], color=color['V'], alpha=0.8, lw=0, s=8, marker='*')
+    ax2.errorbar(bin_centers[ind2], V_frac[ind2], yerr=err_V_frac[ind2], color=color['V'], alpha=0.8, lw=0, elinewidth=0.5, capsize=1, capthick=0.5)
+    ax2.scatter(bin_centers[ind2]+1, V_frac[ind2], color=color['V'], alpha=0.8, lw=0, s=8, marker='*')
+    ax2.errorbar(bin_centers[ind2]+1, V_frac[ind2], yerr=err_V_frac[ind2], color=color['V'], alpha=0.8, lw=0, elinewidth=0.5, capsize=1, capthick=0.5)
     ax2.set_xlabel("Phase")
     ax2.set_ylim(0, 120)
-    ax2.set_xlim(0, 1)
-    ax2.set_ylabel("$|$Fractional$|$ polarisation (%)")
+    ax2.set_xlim(ax1.get_xlim())
+    ax2.set_ylabel("$|$Fractional polarisation$|$ (%)")
     ax2.legend(loc=1)
+
+  # Zoom in -- IP
+    ax3 = fig.add_axes([0.60, 0.5, 0.15, 0.35])
+    ax3.set_ylim(ax1.get_ylim())
+    ax3.plot(bin_centers[ind_ip_wide], I_binned_average[ind_ip_wide], color=color['I'], alpha=0.8, lw=0.5)
+    ax3.plot(bin_centers[ind_ip_wide], Q_binned_average[ind_ip_wide], color=color['Q'], alpha=0.8, lw=0.5)
+    ax3.plot(bin_centers[ind_ip_wide], U_binned_average[ind_ip_wide], color=color['U'], alpha=0.8, lw=0.5)
+    ax3.plot(bin_centers[ind_ip_wide], V_binned_average[ind_ip_wide], color=color['V'], alpha=0.8, lw=0.5)
+    ax3.axvspan(phase_start_ip, phase_end_ip, alpha=0.1, color='yellow')
+#    ax3.set_xticks([0.03, 0.08])
+    ax3.tick_params(axis='y', length=0)
+    ax3.set_xticklabels([])
+    ax3.set_yticklabels([])
+
+  # Zoom in -- MP
+    ax4 = fig.add_axes([0.75, 0.5, 0.25, 0.35])
+    ax4.set_ylim(ax1.get_ylim())
+# We have to do ridiculous shenanigans to avoid the split over phase 0
+    x = pwrap(bin_centers, num_bins, add=True)
+    yI = pwrap(I_binned_average, num_bins)
+    yQ = pwrap(Q_binned_average, num_bins)
+    yU = pwrap(U_binned_average, num_bins)
+    yV = pwrap(V_binned_average, num_bins)
+# OK so now our phase goes from 0.5 to 1.5
+# That means phase_end needs to add 1 and we can go back to using logical_and
+    ind_mp_wide = np.logical_and(x > phase_start-0.03, x < phase_end+1.03)
+    ind_mp_rb = np.logical_and(np.logical_and(x > phase_start, x < phase_end + 1), np.abs(yI > I_cut))
+    ax4.plot(x[ind_mp_wide], yI[ind_mp_wide], color=color['I'], alpha=0.8, lw=0.5)
+    ax4.plot(x[ind_mp_wide], yQ[ind_mp_wide], color=color['Q'], alpha=0.8, lw=0.5)
+    ax4.plot(x[ind_mp_wide], yU[ind_mp_wide], color=color['U'], alpha=0.8, lw=0.5)
+    ax4.plot(x[ind_mp_wide], yV[ind_mp_wide], color=color['V'], alpha=0.8, lw=0.5)
+    ax4.axvspan(phase_start, phase_end+1, alpha=0.1, color='grey')
+    ax4.tick_params(axis='y', direction='inout')
+    ax4.set_xticklabels([])
+    ax4.set_yticklabels([])
+# Representative error bar
+    ax4.errorbar(
+        0.93, 8, 
+        yerr=rms,
+        fmt='none', 
+        ecolor='black', 
+        elinewidth=1, 
+        capsize=1, 
+        capthick=1
+    )
+  # Zoom in on Lin, Circ, Tot -- IP
+    ax5 = fig.add_axes([0.60, 0.1, 0.15, 0.35])
+    ax5.set_ylim(ax2.get_ylim())
+    ax5.set_xlim(ax3.get_xlim())
+    ax5.scatter(bin_centers[ind2], T_frac[ind2], color=color['T'], alpha=0.8, lw=0, s=5, marker='o')
+    ax5.errorbar(bin_centers[ind2], T_frac[ind2], yerr=err_T_frac[ind2], color=color['T'], alpha=0.8, lw=0, elinewidth=0.5, capsize=1, capthick=0.5)
+    ax5.scatter(bin_centers[ind2], L_frac[ind2], color=color['L'], alpha=0.8, lw=0, s=5, marker='s')
+    ax5.errorbar(bin_centers[ind2], L_frac[ind2], yerr=err_L_frac[ind2], color=color['L'], alpha=0.8, lw=0, elinewidth=0.5, capsize=1, capthick=0.5)
+    ax5.scatter(bin_centers[ind2], V_frac[ind2], color=color['V'], alpha=0.8, lw=0, s=5, marker='*')
+    ax5.errorbar(bin_centers[ind2], V_frac[ind2], yerr=err_V_frac[ind2], color=color['V'], alpha=0.8, lw=0, elinewidth=0.5, capsize=1, capthick=0.5)
+    ax5.axvspan(phase_start_ip, phase_end_ip, alpha=0.1, color='yellow')
+#    ax5.set_xticks([0.03, 0.08])
+    ax5.tick_params(axis='y', length=0)
+    ax5.set_yticklabels([])
+
+    yL = pwrap(L_frac, num_bins)
+    yV = pwrap(V_frac, num_bins)
+    yT = pwrap(T_frac, num_bins)
+    eL = pwrap(err_L_frac, num_bins)
+    eV = pwrap(err_V_frac, num_bins)
+    eT = pwrap(err_T_frac, num_bins)
+  # Zoom in on Lin, Circ, Tot -- MP
+    ax6 = fig.add_axes([0.75, 0.1, 0.25, 0.35])
+    ax6.set_ylim(ax2.get_ylim())
+    ax6.set_xlim(ax4.get_xlim())
+    ax6.scatter(x[ind_mp_rb], yT[ind_mp_rb], color=color['T'], alpha=0.8, lw=0, s=5, marker='o')
+    ax6.errorbar(x[ind_mp_rb], yT[ind_mp_rb], yerr=eT[ind_mp_rb], color=color['T'], alpha=0.8, lw=0, elinewidth=0.5, capsize=1, capthick=0.5)
+    ax6.scatter(x[ind_mp_rb], yL[ind_mp_rb], color=color['L'], alpha=0.8, lw=0, s=5, marker='s')
+    ax6.errorbar(x[ind_mp_rb], yL[ind_mp_rb], yerr=eL[ind_mp_rb], color=color['L'], alpha=0.8, lw=0, elinewidth=0.5, capsize=1, capthick=0.5)
+    ax6.scatter(x[ind_mp_rb], yV[ind_mp_rb], color=color['V'], alpha=0.8, lw=0, s=8, marker='*')
+    ax6.errorbar(x[ind_mp_rb], yV[ind_mp_rb], yerr=eV[ind_mp_rb], color=color['V'], alpha=0.8, lw=0, elinewidth=0.5, capsize=1, capthick=0.5)
+    ax6.axvspan(phase_start, phase_end+1, alpha=0.1, color='grey')
+    ax6.tick_params(axis='y', direction='inout')
+    ax6.set_yticklabels([])
+
+
+
     n_p = times_az[-1] / (2*P*24*3600)
     len_ip = (phase_end_ip - phase_start_ip) * 2*P *24*3600
     len_mp = (phase_end - phase_start) * 2*P *24*3600
     print(f"Successfully stacked {n_p:2.2f} periods, boosting S/N by {np.sqrt(n_p):2.2f}")
+    print(f"RMS of light curve is {rms/1000:2.0f} uJy/beam")
     print(f"Main pulse is about {len_mp:2.0f}s wide.")
     print(f"Inter-pulse is about {len_ip:2.0f}s wide.")
     print(f"Maximum linear polarisation of main (broad) pulse is {np.nanmax(L_frac[ind1]):3.0f}%")
@@ -1533,6 +1703,7 @@ if makeACF is True:
         ax.set_xlim(0.4, 0.6)
         fig.savefig(f"ASKAP_pulse{n}.png", bbox_inches="tight")
        
+# TODO fix this since the change to the ephemeris broke it
     # The interesting pulses are 2, 4, and 13
     phase_start = 0.47
     phase_end = 0.55
