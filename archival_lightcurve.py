@@ -31,7 +31,7 @@ SPECIND = -1.5
 CALFREQ = 1.e9 # (1 GHz)
 
 # If you've run this already, you can make these False and save some time
-ASKAPPBCorr = False
+ASKAPPBCorr = True
 MKTPBCorr = False
 
 PARAMS = {
@@ -85,6 +85,9 @@ def make_light_curve(dsfile, coords):
 # This one too!!
     if stem == "CB1636329974":
         ds["DS"][0:25,:,:] = np.nan
+# and in this one, it flies right through the middle!! -- we had to remove it completely
+#    if stem == "CB1628607085":
+#        ds["DS"][int(len(times)/3):2*int(len(times)/3),:,:] = np.nan
 
 # Do some RFI flagging
     It = np.real(ds["DS"][:,:,0]+ds["DS"][:,:,3])/2
@@ -200,6 +203,9 @@ def plot_rows(
 #    norm = Normalize(vmin=500, vmax=3000)
 #    color = cmap(norm(1000))
 
+    # Setting a scale factor so that the plots look nice
+    scale = 0.75
+
     # Walk through contiguous chunks of constant row index
     breaks = list(np.flatnonzero(rows[1:] != rows[:-1]) + 1)
 
@@ -209,7 +215,7 @@ def plot_rows(
     for start, stop in zip(starts, stops):
         # Slice this cycle of flux and offset by row count
         row = rows[start]
-        ytrace = flux[start:stop] - step_size * row
+        ytrace = scale*flux[start:stop] - step_size * row
 
         ax.plot(
             phase[start:stop],
@@ -555,17 +561,17 @@ def main():
 # The first few observations are very long
     ax1 = plot_folded_lightcurves(
         ax1,
-        ts[0:19],
-        lcs[0:19],
-        colors[0:19],
+        ts[0:18],
+        lcs[0:18],
+        colors[0:18],
         source=J1555
     )
 # The rest are short
     ax2 = plot_folded_lightcurves(
         ax2,
-        ts[19:35],
-        lcs[19:35],
-        colors[19:35],
+        ts[18:35],
+        lcs[18:35],
+        colors[18:35],
         source=J1555
     )
     ax3 = plot_folded_lightcurves(
@@ -577,10 +583,10 @@ def main():
     )
     fig.tight_layout()
 
-    for ax in [ax1, ax2]:
+    for ax in [ax1, ax2, ax3]:
         ymin, ymax = ax.get_ylim()
 # Decrease padding (no idea why it is so large)
-        ax.set_ylim(ymin+10, ymax-10)
+        ax.set_ylim(ymin+20, ymax-20)
     fig.savefig("observations_stacked.png", format="png")
     fig.savefig("observations_stacked.pdf", format="pdf")
 
