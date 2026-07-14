@@ -648,20 +648,40 @@ askap = Observer.at_site("mwa")
 
 pa_mkt = meerkat.parallactic_angle(Time(times_m/(24*3600), format='mjd', scale='utc'), source_sc)
 
-# Sanity check
-fig = plt.figure(figsize=(8,5))
-ax = fig.add_subplot(111)
-ax.plot(times_m, pa_mkt.deg)
-ax.set_xlabel("Time / MJDsec")
-ax.set_ylabel("Parallactic angle / deg")
-fig.savefig("Parallactic_angle_MKT.png", bbox_inches="tight")
-
-
 # Form light curves
 ilc_m = np.nanmean(It_m, axis=1)
 qlc_m = np.nanmean(Qt_m, axis=1)
 ulc_m = np.nanmean(Ut_m, axis=1)
 vlc_m = np.nanmean(Vt_m, axis=1)
+
+qlc_m_corr = qlc_m * np.cos(2*pa_mkt) + ulc_m * np.sin(2*pa_mkt)
+ulc_m_corr = ulc_m * np.cos(2*pa_mkt) - qlc_m * np.sin(2*pa_mkt)
+# I think according to Alec's slides it's slightly different
+ulc_m_corr_alec = qlc_m * np.sin(2*pa_mkt) - ulc_m * np.cos(2*pa_mkt)
+
+# Sanity check
+fig = plt.figure(figsize=(5,8))
+ax = fig.add_subplot(411)
+ax.plot(times_m, qlc_m, label='Stokes Q uncorrected', lw=0.5, color=color['Q'], alpha=0.5)
+ax.plot(times_m, ulc_m, label='Stokes U uncorrected', lw=0.5, color=color['U'], alpha=0.5)
+ax.set_ylim([-0.005,0.005])
+ax.set_ylabel("$S$ / Jy")
+ax.legend()
+ax2 = fig.add_subplot(412)
+ax2.plot(times_m, qlc_m_corr, label='Stokes Q corrected', lw=0.5, color=color['Q'])
+ax2.plot(times_m, ulc_m_corr, label='Stokes U corrected', lw=0.5, color=color['U'])
+ax2.plot(times_m, ulc_m_corr_alec, label='Stokes U Alec', lw=0.5)
+ax2.set_ylim([-0.005,0.005])
+ax2.set_ylabel("$S$ / Jy")
+ax2.legend()
+ax3 = fig.add_subplot(413)
+ax3.scatter(times_m, pa_mkt.deg)
+ax3.set_ylabel("Parallactic angle $\psi$ / deg")
+ax4 = fig.add_subplot(414)
+ax4.scatter(times_m, np.cos(2*pa_mkt))
+ax4.set_ylabel("cos(2$\psi$)")
+ax4.set_xlabel("Time / MJDsec")
+fig.savefig("Parallactic_angle_MKT.png", bbox_inches="tight", dpi=200)
 
 ### Sanity check
 #fig = plt.figure(figsize=(8,5))
@@ -806,6 +826,8 @@ make_lightcurve(times_mz, 1000*ilc_m, vmin, vmax, 0.5, color["I"], 1.0, 'Stokes 
 vmin, vmax = -20, 20
 make_lightcurve(times_mz, 1000*qlc_m, vmin, vmax, 0.5, color["Q"], 1.0, 'Stokes Q', 'MeerKAT_StokesQ_light_curve.png', offset=times_m[0])
 make_lightcurve(times_mz, 1000*ulc_m, vmin, vmax, 0.5, color["U"], 1.0, 'Stokes U', 'MeerKAT_StokesU_light_curve.png', offset=times_m[0])
+make_lightcurve(times_mz, 1000*qlc_m_corr, vmin, vmax, 0.5, color["Q"], 1.0, 'Stokes Q', 'MeerKAT_StokesQ_pacorr_light_curve.png', offset=times_m[0])
+make_lightcurve(times_mz, 1000*ulc_m_corr, vmin, vmax, 0.5, color["U"], 1.0, 'Stokes U', 'MeerKAT_StokesU_pacorr_light_curve.png', offset=times_m[0])
 make_lightcurve(times_mz, 1000*vlc_m, vmin, vmax, 0.5, color["V"], 1.0, 'Stokes V', 'MeerKAT_StokesV_light_curve.png', offset=times_m[0])
 make_lightcurve([times_mz, times_mz, times_mz],
                 [1000*qlc_m, 1000*ulc_m, 1000*vlc_m],
@@ -815,6 +837,15 @@ make_lightcurve([times_mz, times_mz, times_mz],
                 [1.0, 1.0, 1.0],
                 ['Stokes Q', 'Stokes U', 'Stokes V'],
                 'MeerKAT_StokesQUV_light_curve.png', offset=times_m[0])
+
+make_lightcurve([times_mz, times_mz, times_mz],
+                [1000*qlc_m_corr, 1000*ulc_m_corr, 1000*vlc_m],
+                vmin, vmax,
+                [0.5, 0.5, 0.5],
+                [color["Q"], color["U"], color["V"]],
+                [1.0, 1.0, 1.0],
+                ['Stokes Q', 'Stokes U', 'Stokes V'],
+                'MeerKAT_StokesQUV_pacorr_light_curve.png', offset=times_m[0])
 
 
 # Save MeerKAT data for Emil
@@ -831,6 +862,17 @@ make_lightcurve([times_mz[indstart:indend], times_mz[indstart:indend], times_mz[
                 [0.8, 0.8, 0.8, 0.8],
                 ['Stokes I', 'Stokes Q', 'Stokes U', 'Stokes V'],
                 'MeerKAT_StokesIQUV_light_curve_zoom.png',
+                offset=times_m[indstart],
+                imwidth=5)
+
+make_lightcurve([times_mz[indstart:indend], times_mz[indstart:indend], times_mz[indstart:indend], times_mz[indstart:indend]],
+                [1000*ilc_m[indstart:indend], 1000*qlc_m_corr[indstart:indend], 1000*ulc_m_corr[indstart:indend], 1000*vlc_m[indstart:indend]],
+                vmin, vmax,
+                [0.5, 0.5, 0.5, 0.5],
+                [color["I"], color["Q"], color["U"], color["V"]],
+                [0.8, 0.8, 0.8, 0.8],
+                ['Stokes I', 'Stokes Q', 'Stokes U', 'Stokes V'],
+                'MeerKAT_StokesIQUV_pacorr_light_curve_zoom.png',
                 offset=times_m[indstart],
                 imwidth=5)
 
