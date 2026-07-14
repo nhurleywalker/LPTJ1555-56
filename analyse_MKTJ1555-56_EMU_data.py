@@ -20,16 +20,16 @@ from primary_beams import GaussianPB, MKCosBeam, get_beam_pos_mkt
 makeDynspec = False
 makeLightcurves = False
 makePaperDS = False
-makeFold = True
+makeFold = False
 # NB: if you want to makePA or makeRM or makePhaseBin, you must also makeFold
 makePA = False
 makeRM = False
 makePhaseBin = False
 makeIPSpec = False
-debugPoly = False
-makeJointIQUV = False
-makeJointSpectrum = False
-makeSpikySpectrum = False
+debugPoly = True
+makeJointIQUV = True
+makeJointSpectrum = True
+makeSpikySpectrum = True
 makeIPSpectrum = False
 tryBandSplit = False
 makeACF = False
@@ -662,17 +662,16 @@ seg2_end = tbreak[1]+1
 seg3_end = tbreak[2]+1
 
 # I noticed the first and last samples are bad in each scan, so we will flag those
+# This has been fixed with the latest MeerKAT data
 
 # Segment 1
 deg = 3
 vmin, vmax = -10, 30
-b = 3 # b for buffer
+# TODO remove all of these if the scan edges are fine
 
 t = times_m[:seg1_end]
-t_fit = times_m[b:seg1_end-b]
 y = ilc_m[:seg1_end]
-y_fit = ilc_m[b:seg1_end-b]
-p = np.polynomial.Polynomial.fit(t_fit, y_fit, deg=deg)
+p = np.polynomial.Polynomial.fit(t, y, deg=deg)
 y_smooth = p(t)
 
 if debugPoly is True:
@@ -687,20 +686,11 @@ if debugPoly is True:
                     imwidth=8)
 
 ilc_m[:seg1_end] = y - y_smooth
-# And now flag the buffer
-ilc_m[0:b] = np.nan
-ilc_m[seg1_end-b:seg1_end] = np.nan
-qlc_m[0:b] = np.nan
-qlc_m[seg1_end-b:seg1_end] = np.nan
-ulc_m[0:b] = np.nan
-ulc_m[seg1_end-b:seg1_end] = np.nan
-vlc_m[0:b] = np.nan
-vlc_m[seg1_end-b:seg1_end] = np.nan
 
 # Segment 2
 deg = 3
 vmin, vmax = -30, 30
-b = 10 # b for buffer
+#b = 10 # b for buffer
 t = times_m[seg1_end:seg2_end]
 t_fit = times_m[seg1_end+b:seg2_end-b]
 y = ilc_m[seg1_end:seg2_end]
@@ -738,7 +728,7 @@ print(f"Typical noise of MeerKAT light curves is {rms:2.1f}mJy/beam")
 # Segment 3
 deg = 6
 vmin, vmax = -30, 25
-b = 10 
+#b = 10 
 t = times_m[seg2_end:seg3_end]
 t_fit = times_m[seg2_end+b:seg3_end-b]
 y = ilc_m[seg2_end:seg3_end]
@@ -778,11 +768,11 @@ vlc_m[seg3_end-b:seg3_end] = np.nan
 # Segment 4
 vmin, vmax = -10, 60
 deg = 3
-b = 10
+#b = 10
 t = times_m[seg3_end:]
-t_fit = times_m[seg3_end+b:-b]
+t_fit = times_m[seg3_end+b:]#-b]
 y = ilc_m[seg3_end:]
-y_fit = ilc_m[seg3_end+b:-b]
+y_fit = ilc_m[seg3_end+b:]#-b]
 p = np.polynomial.Polynomial.fit(t_fit, y_fit, deg=deg)
 y_smooth = p(t)
 
