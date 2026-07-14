@@ -4,13 +4,16 @@ import matplotlib.pyplot as plt
 from matplotlib import colors
 from matplotlib.ticker import StrMethodFormatter, AutoMinorLocator, MultipleLocator
 from astropy.time import Time
-from astropy.coordinates import SkyCoord
+from astropy.coordinates import SkyCoord, EarthLocation
 from astropy import units as u
 from statsmodels.graphics.tsaplots import plot_acf
 from scipy.optimize import curve_fit
 from scipy.special import erfi, erf
 import pandas as pd
 import yaml
+
+# For parallactic angle correction
+from astroplan import Observer
 
 import glob
 import sys
@@ -30,7 +33,7 @@ makeIPSpec = False
 debugPoly = False
 makeJointIQUV = True
 makeJointSpectrum = True
-makeSpikySpectrum = True
+makeSpikySpectrum = False
 makeIPSpectrum = False
 tryBandSplit = False
 makeACF = False
@@ -553,7 +556,7 @@ if makeSpikySpectrum is True:
     covar = fit_res[1]
     err_p = np.sqrt(np.diag(covar))
 
-    print("Power-law fit parameters: S at 1 GHz = {0:3.2f}+/-{2:3.2f}mJy, alpha = {1:3.2f}+/-{3:3.2f}".format(plS, pla, err_p[0], err_p[1]))
+    print("Power-law fit parameters to MeerKAT 'spiky' pulse: S at 1 GHz = {0:3.2f}+/-{2:3.2f}mJy, alpha = {1:3.2f}+/-{3:3.2f}".format(plS, pla, err_p[0], err_p[1]))
 
     no_samps = 1000
     samps = np.random.multivariate_normal(
@@ -638,6 +641,21 @@ if tryBandSplit is True:
     axr.set_xlabel("time / s")
     axr.plot(times_mz[indstart:indend], ilc_low_norm - ilc_high_norm, lw=0.5, color='black', alpha=0.8, label='Difference')
     fig.savefig("substructure_band_comparison.png", bbox_inches="tight")
+
+# Perform parallactic angle correction to rotate Q and U correctly
+meerkat = Observer.at_site("salt")
+askap = Observer.at_site("mwa")
+
+pa_mkt = meerkat.parallactic_angle(Time(times_m/(24*3600), format='mjd', scale='utc'), source_sc)
+
+# Sanity check
+fig = plt.figure(figsize=(8,5))
+ax = fig.add_subplot(111)
+ax.plot(times_m, pa_mkt.deg)
+ax.set_xlabel("Time / MJDsec")
+ax.set_ylabel("Parallactic angle / deg")
+fig.savefig("Parallactic_angle_MKT.png", bbox_inches="tight")
+
 
 # Form light curves
 ilc_m = np.nanmean(It_m, axis=1)
@@ -849,6 +867,7 @@ tend = np.nanmax([arr3["TIMES"][-1], mkt["TIMES"][-1]])
 
 # Zoom in on the interesting section, make joint plots
 tstart, tend = 5159271500.0, 5159272500.0
+spec_start, spec_end = 5159271875.0, 5159271970.0
 
 if makeJointIQUV is True:
     fig = plt.figure(figsize=(5,5))
@@ -861,7 +880,7 @@ if makeJointIQUV is True:
         ax.axvline(ephem(i)*24*3600, alpha=0.4, color='orange')
     ax.set_xlim(tstart, tend)
     ax.set_ylim(-10, 30)
-    ax.axvspan(5159271905.0, 5159271950.0, color='blue', alpha=0.1)
+    ax.axvspan(spec_start, spec_end, color='blue', alpha=0.1)
     ax.legend(loc=1)
     fig.savefig("Joint_StokesI_lightcurve.png", bbox_inches="tight")
 
@@ -882,8 +901,8 @@ if makeJointIQUV is True:
     fig.savefig("Joint_StokesQUV_lightcurve.png", bbox_inches="tight")
 
 if makeJointSpectrum is True:
-    ind_a = np.argwhere(np.logical_and(times_a<5159271950.0, times_a>5159271905.0))
-    ind_m = np.argwhere(np.logical_and(times_m<5159271950.0, times_m>5159271905.0))
+    ind_a = np.argwhere(np.logical_and(times_a<spec_end, times_a>spec_start))
+    ind_m = np.argwhere(np.logical_and(times_m<spec_end, times_m>spec_start))
 
 # First look at the dynamic spectra in this specific range
     vmin, vmax = -0.005, 0.03
@@ -906,6 +925,7 @@ if makeJointSpectrum is True:
     weights_a /= np.nanmax(weights_a)
 # We need to tile it to have the frequency dimension
     weights_a = np.tile(weights_a, len(freqs_a))
+
 
     I_a = np.nansum(np.squeeze(It[ind_a,:])*weights_a, axis=0)/np.nansum(weights_a,axis=0)
 
@@ -957,7 +977,7 @@ if makeJointSpectrum is True:
     covar = fit_res[1]
     err_p = np.sqrt(np.diag(covar))
 
-    print("Power-law fit parameters: S at 1 GHz = {0:3.2f}+/-{2:3.2f}mJy, alpha = {1:3.2f}+/-{3:3.2f}".format(plS, pla, err_p[0], err_p[1]))
+    print("Power-law fit parameters from joint fit to IP: S at 1 GHz = {0:3.2f}+/-{2:3.2f}mJy, alpha = {1:3.2f}+/-{3:3.2f}".format(plS, pla, err_p[0], err_p[1]))
 
     no_samps = 1000
     samps = np.random.multivariate_normal(
@@ -1375,7 +1395,7 @@ if makeFold is True:
         covar = fit_res[1]
         err_p = np.sqrt(np.diag(covar))
 
-        print("Power-law fit parameters: S at 1 GHz = {0:3.2f}+/-{2:3.2f}mJy, alpha = {1:3.2f}+/-{3:3.2f}".format(plS, pla, err_p[0], err_p[1]))
+        print("Power-law fit parameters to just EMU Pulse (low bandwidth!): S at 1 GHz = {0:3.2f}+/-{2:3.2f}mJy, alpha = {1:3.2f}+/-{3:3.2f}".format(plS, pla, err_p[0], err_p[1]))
 
         no_samps = 1000
         samps = np.random.multivariate_normal(
@@ -1535,7 +1555,7 @@ if makeFold is True:
         covar = fit_res[1]
         err_p = np.sqrt(np.diag(covar))
 
-        print("Power-law fit parameters: S at 1 GHz = {0:3.2f}+/-{2:3.2f}mJy, alpha = {1:3.2f}+/-{3:3.2f}".format(plS, pla, err_p[0], err_p[1]))
+        print("Power-law fit parameters to just EMU IP (low bandwidth!): S at 1 GHz = {0:3.2f}+/-{2:3.2f}mJy, alpha = {1:3.2f}+/-{3:3.2f}".format(plS, pla, err_p[0], err_p[1]))
 
         no_samps = 1000
         samps = np.random.multivariate_normal(
