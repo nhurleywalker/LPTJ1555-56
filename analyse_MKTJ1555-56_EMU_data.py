@@ -25,8 +25,9 @@ makeFold = False
 makePA = False
 makeRM = False
 makePhaseBin = False
+# ASKAP version -- doesn't work as bandwidth and S/N are too low
 makeIPSpec = False
-debugPoly = True
+debugPoly = False
 makeJointIQUV = True
 makeJointSpectrum = True
 makeSpikySpectrum = True
@@ -181,6 +182,11 @@ mkt = np.load("averaged_dynspec/CB1652551867.pkl", allow_pickle=True)
 #mkt2 = np.load("dynspec/G326.31.8_Subbed.uvfits.pkl", allow_pickle=True)
 #times_m2 = mkt2["TIMES"]
 #mkt = np.load("dynspec/G326.31.8_Subbed.uvfits.pkl", allow_pickle=True)
+# RFI flagging (time, freq, pol)
+mkt["DS"][:,908:925,:] = np.nan
+mkt["DS"][96:142,186:207,:] = np.nan
+mkt["DS"][96:142,952:974,:] = np.nan
+mkt["DS"][870:876,899:940,:] = np.nan
 
 freqs_m = mkt["FREQS"]/1.e9
 times_m = mkt["TIMES"]
@@ -513,14 +519,15 @@ if makeSpikySpectrum is True:
 
 # Not enough S/N in raw spectrum for a fit, but let's break it down into some segments
 # Bin the data
-    I_m_b = np.hstack([np.nanmean(I_m_c[:50]), np.nanmean(I_m_c[50:190]), np.nanmean(I_m_c[190:400]), np.nanmean(I_m_c[400:600]), np.nanmean(I_m_c[600:800]), np.nanmean(I_m_c[800:])])
-    freqs_m_b = np.hstack([np.nanmean(freqs_m[:50][~np.isnan(I_m_c[:50])]), np.nanmean(freqs_m[50:190][~np.isnan(I_m_c[50:190])]), np.nanmean(freqs_m[190:400][~np.isnan(I_m_c[190:400])]), np.nanmean(freqs_m[400:600][~np.isnan(I_m_c[400:600])]), np.nanmean(freqs_m[600:800][~np.isnan(I_m_c[600:800])]), np.nanmean(freqs_m[800:][~np.isnan(I_m_c[800:])])])
-    err_m_b = np.hstack([np.nanstd(I_m_c[:50])/np.sqrt(len(I_m_c[:50][~np.isnan(I_m_c[:50])])),
-                         np.nanstd(I_m_c[50:190])/np.sqrt(len(I_m_c[50:190][~np.isnan(I_m_c[50:190])])),
-                         np.nanstd(I_m_c[190:400])/np.sqrt(len(I_m_c[190:400][~np.isnan(I_m_c[190:400])])),
-                         np.nanstd(I_m_c[400:600])/np.sqrt(len(I_m_c[400:600][~np.isnan(I_m_c[400:600])])),
-                         np.nanstd(I_m_c[600:800])/np.sqrt(len(I_m_c[600:800][~np.isnan(I_m_c[600:800])])),
-                         np.nanstd(I_m_c[800:])/np.sqrt(len(I_m_c[800:][~np.isnan(I_m_c[800:])]))])
+    ib = [110, 240, 470, 700, 860]
+    I_m_b = np.hstack([np.nanmean(I_m_c[:ib[0]]), np.nanmean(I_m_c[ib[0]:ib[1]]), np.nanmean(I_m_c[ib[1]:ib[2]]), np.nanmean(I_m_c[ib[2]:ib[3]]), np.nanmean(I_m_c[ib[3]:ib[4]]), np.nanmean(I_m_c[ib[4]:])])
+    freqs_m_b = np.hstack([np.nanmean(freqs_m[:ib[0]][~np.isnan(I_m_c[:ib[0]])]), np.nanmean(freqs_m[ib[0]:ib[1]][~np.isnan(I_m_c[ib[0]:ib[1]])]), np.nanmean(freqs_m[ib[1]:ib[2]][~np.isnan(I_m_c[ib[1]:ib[2]])]), np.nanmean(freqs_m[ib[2]:ib[3]][~np.isnan(I_m_c[ib[2]:ib[3]])]), np.nanmean(freqs_m[ib[3]:ib[4]][~np.isnan(I_m_c[ib[3]:ib[4]])]), np.nanmean(freqs_m[ib[4]:][~np.isnan(I_m_c[ib[4]:])])])
+    err_m_b = np.hstack([np.nanstd(I_m_c[:ib[0]])/np.sqrt(len(I_m_c[:ib[0]][~np.isnan(I_m_c[:ib[0]])])),
+                         np.nanstd(I_m_c[ib[0]:ib[1]])/np.sqrt(len(I_m_c[ib[0]:ib[1]][~np.isnan(I_m_c[ib[0]:ib[1]])])),
+                         np.nanstd(I_m_c[ib[1]:ib[2]])/np.sqrt(len(I_m_c[ib[1]:ib[2]][~np.isnan(I_m_c[ib[1]:ib[2]])])),
+                         np.nanstd(I_m_c[ib[2]:ib[3]])/np.sqrt(len(I_m_c[ib[2]:ib[3]][~np.isnan(I_m_c[ib[2]:ib[3]])])),
+                         np.nanstd(I_m_c[ib[3]:ib[4]])/np.sqrt(len(I_m_c[ib[3]:ib[4]][~np.isnan(I_m_c[ib[3]:ib[4]])])),
+                         np.nanstd(I_m_c[ib[4]:])/np.sqrt(len(I_m_c[ib[4]:][~np.isnan(I_m_c[ib[4]:])]))])
 
 # Fit to those data
 # Skip the first bin because it's obviously not great
@@ -913,15 +920,16 @@ if makeJointSpectrum is True:
     I_m[I_m==0] = np.nan
 
 # Not enough S/N in raw spectrum for a fit, but let's break it down into some segments
+    ib = [110, 240, 470, 700, 860]
 # Bin the data
-    I_m_b = np.hstack([np.nanmean(I_m[:50]), np.nanmean(I_m[50:190]), np.nanmean(I_m[190:400]), np.nanmean(I_m[400:600]), np.nanmean(I_m[600:800]), np.nanmean(I_m[800:])])
-    freqs_m_b = np.hstack([np.nanmean(freqs_m[:50][~np.isnan(I_m[:50])]), np.nanmean(freqs_m[50:190][~np.isnan(I_m[50:190])]), np.nanmean(freqs_m[190:400][~np.isnan(I_m[190:400])]), np.nanmean(freqs_m[400:600][~np.isnan(I_m[400:600])]), np.nanmean(freqs_m[600:800][~np.isnan(I_m[600:800])]), np.nanmean(freqs_m[800:][~np.isnan(I_m[800:])])])
-    err_m_b = np.hstack([np.nanstd(I_m[:50])/np.sqrt(len(I_m[:50][~np.isnan(I_m[:50])])),
-                         np.nanstd(I_m[50:190])/np.sqrt(len(I_m[50:190][~np.isnan(I_m[50:190])])),
-                         np.nanstd(I_m[190:400])/np.sqrt(len(I_m[190:400][~np.isnan(I_m[190:400])])),
-                         np.nanstd(I_m[400:600])/np.sqrt(len(I_m[400:600][~np.isnan(I_m[400:600])])),
-                         np.nanstd(I_m[600:800])/np.sqrt(len(I_m[600:800][~np.isnan(I_m[600:800])])),
-                         np.nanstd(I_m[800:])/np.sqrt(len(I_m[800:][~np.isnan(I_m[800:])]))])
+    I_m_b = np.hstack([np.nanmean(I_m[:ib[0]]), np.nanmean(I_m[ib[0]:ib[1]]), np.nanmean(I_m[ib[1]:ib[2]]), np.nanmean(I_m[ib[2]:ib[3]]), np.nanmean(I_m[ib[3]:ib[4]]), np.nanmean(I_m[ib[4]:])])
+    freqs_m_b = np.hstack([np.nanmean(freqs_m[:ib[0]][~np.isnan(I_m[:ib[0]])]), np.nanmean(freqs_m[ib[0]:ib[1]][~np.isnan(I_m[ib[0]:ib[1]])]), np.nanmean(freqs_m[ib[1]:ib[2]][~np.isnan(I_m[ib[1]:ib[2]])]), np.nanmean(freqs_m[ib[2]:ib[3]][~np.isnan(I_m[ib[2]:ib[3]])]), np.nanmean(freqs_m[ib[3]:ib[4]][~np.isnan(I_m[ib[3]:ib[4]])]), np.nanmean(freqs_m[ib[4]:][~np.isnan(I_m[ib[4]:])])])
+    err_m_b = np.hstack([np.nanstd(I_m[:ib[0]])/np.sqrt(len(I_m[:ib[0]][~np.isnan(I_m[:ib[0]])])),
+                         np.nanstd(I_m[ib[0]:ib[1]])/np.sqrt(len(I_m[ib[0]:ib[1]][~np.isnan(I_m[ib[0]:ib[1]])])),
+                         np.nanstd(I_m[ib[1]:ib[2]])/np.sqrt(len(I_m[ib[1]:ib[2]][~np.isnan(I_m[ib[1]:ib[2]])])),
+                         np.nanstd(I_m[ib[2]:ib[3]])/np.sqrt(len(I_m[ib[2]:ib[3]][~np.isnan(I_m[ib[2]:ib[3]])])),
+                         np.nanstd(I_m[ib[3]:ib[4]])/np.sqrt(len(I_m[ib[3]:ib[4]][~np.isnan(I_m[ib[3]:ib[4]])])),
+                         np.nanstd(I_m[ib[4]:])/np.sqrt(len(I_m[ib[4]:][~np.isnan(I_m[ib[4]:])]))])
     I_a_b = np.nanmean(I_a)
     freqs_a_b = np.nanmean(freqs_a[~np.isnan(I_a)])
     err_a_b = np.nanstd(I_a)/np.sqrt(len(I_a[~np.isnan(I_a)]))
@@ -985,9 +993,9 @@ if makeJointSpectrum is True:
 #    ax.plot(freqs_a, 1000*I_a_smoothed, color='black', alpha=0.8, lw=0.5)
 #    ax.errorbar(freqs_a, 1000*I_pulse, yerr=1000*rms_arr, color=color['I'], alpha=0.8, elinewidth=0.5, lw=0, zorder=5)
 #    ax.axhline(np.nanmean(1000*I_pulse), color=color['I'], lw=0.5)
-    ax.axvspan(freqs_m[50],freqs_m[190], color='yellow', alpha=0.15)
-    ax.axvspan(freqs_m[400], freqs_m[600], color='yellow', alpha=0.15)
-    ax.axvspan(freqs_m[800], freqs_m[-1], color='yellow', alpha=0.15)
+    ax.axvspan(freqs_m[ib[0]],freqs_m[ib[1]], color='yellow', alpha=0.15)
+    ax.axvspan(freqs_m[ib[2]], freqs_m[ib[3]], color='yellow', alpha=0.15)
+    ax.axvspan(freqs_m[ib[4]], freqs_m[-1], color='yellow', alpha=0.15)
     ax.set_ylabel("Weighted brightness (mJy)")
     ax.set_xlabel("Frequency / GHz")
     ax.set_xscale('log')
