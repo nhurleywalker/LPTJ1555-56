@@ -178,12 +178,12 @@ times_az = arr3["TIMES"] - arr3["TIMES"][0]
 # Primary-beam corrected version
 mkt = np.load("averaged_dynspec/CB1652551867.pkl", allow_pickle=True)
 # Can't use this as it has been baseline-dependent-averaged!
-mkt2 = np.load("dynspec/G326.31.8_Subbed.uvfits.pkl", allow_pickle=True)
+#mkt2 = np.load("dynspec/G326.31.8_Subbed.uvfits.pkl", allow_pickle=True)
+#times_m2 = mkt2["TIMES"]
 #mkt = np.load("dynspec/G326.31.8_Subbed.uvfits.pkl", allow_pickle=True)
 
 freqs_m = mkt["FREQS"]/1.e9
 times_m = mkt["TIMES"]
-times_m2 = mkt2["TIMES"]
 times_mz = mkt["TIMES"] - mkt["TIMES"][0]
 
 # ASKAP data correct transforms -- if data has not been modified by FixMS
@@ -261,14 +261,14 @@ for freq in freqs_a:
 pb_corr_3 = 1. / np.tile(np.array(pb_vals), (It3.shape[0],1))
 
 # Sanity check
-fig = plt.figure(figsize=(8,5))
-ax = fig.add_axes([0.1, 0.1, 0.8, 0.9])
-cax = fig.add_axes([0.92, 0.1, 0.05, 0.9])
-img = ax.imshow(pb_corr_3.T, origin='lower', aspect='auto')
-plt.colorbar(img, cax=cax)
-ax.set_xlabel("time")
-ax.set_ylabel("channel")
-fig.savefig("pb_corr_test.png", bbox_inches="tight")
+#fig = plt.figure(figsize=(8,5))
+#ax = fig.add_axes([0.1, 0.1, 0.8, 0.9])
+#cax = fig.add_axes([0.92, 0.1, 0.05, 0.9])
+#img = ax.imshow(pb_corr_3.T, origin='lower', aspect='auto')
+#plt.colorbar(img, cax=cax)
+#ax.set_xlabel("time")
+#ax.set_ylabel("channel")
+#fig.savefig("pb_corr_test.png", bbox_inches="tight")
 
 # Beam 15
 pb_vals = []
@@ -661,17 +661,21 @@ seg1_end = tbreak[0]+1
 seg2_end = tbreak[1]+1
 seg3_end = tbreak[2]+1
 
-# I noticed the first and last samples are bad in each scan, so we will flag those
-# This has been fixed with the latest MeerKAT data
+# Cutoff for sigma-clipping
+cutoff = 0.003 # Jy
 
 # Segment 1
 deg = 3
 vmin, vmax = -10, 30
-# TODO remove all of these if the scan edges are fine
 
 t = times_m[:seg1_end]
 y = ilc_m[:seg1_end]
 p = np.polynomial.Polynomial.fit(t, y, deg=deg)
+y_smooth = p(t)
+# Sigma-clip
+y_fit = y[np.abs(y - p(t))<cutoff]
+t_fit = t[np.abs(y - p(t))<cutoff]
+p = np.polynomial.Polynomial.fit(t_fit,y_fit, deg=deg)
 y_smooth = p(t)
 
 if debugPoly is True:
@@ -690,11 +694,13 @@ ilc_m[:seg1_end] = y - y_smooth
 # Segment 2
 deg = 3
 vmin, vmax = -30, 30
-#b = 10 # b for buffer
 t = times_m[seg1_end:seg2_end]
-t_fit = times_m[seg1_end+b:seg2_end-b]
 y = ilc_m[seg1_end:seg2_end]
-y_fit = ilc_m[seg1_end+b:seg2_end-b]
+p = np.polynomial.Polynomial.fit(t, y, deg=deg)
+y_smooth = p(t)
+# Sigma-clip
+y_fit = y[np.abs(y - p(t))<cutoff]
+t_fit = t[np.abs(y - p(t))<cutoff]
 p = np.polynomial.Polynomial.fit(t_fit, y_fit, deg=deg)
 y_smooth = p(t)
 
@@ -710,37 +716,24 @@ if debugPoly is True:
                     imwidth=8)
 
 ilc_m[seg1_end:seg2_end] = y - y_smooth
-# And now flag the buffer
-ilc_m[seg1_end:seg1_end+b] = np.nan
-ilc_m[seg2_end-b:seg2_end] = np.nan
-qlc_m[seg1_end:seg1_end+b] = np.nan
-qlc_m[seg2_end-b:seg2_end] = np.nan
-ulc_m[seg1_end:seg1_end+b] = np.nan
-ulc_m[seg2_end-b:seg2_end] = np.nan
-vlc_m[seg1_end:seg1_end+b] = np.nan
-vlc_m[seg2_end-b:seg2_end] = np.nan
 
 # This segment is nice and clean so let's estimate the RMS noise
 rms = 1000*np.nanstd(ilc_m[seg1_end:seg2_end])
-print(f"Typical noise of MeerKAT light curves is {rms:2.1f}mJy/beam")
+print(f"Typical noise of MeerKAT light curves is {rms:2.2f}mJy/beam")
 
 
 # Segment 3
-deg = 6
+deg = 3
 vmin, vmax = -30, 25
-#b = 10 
 t = times_m[seg2_end:seg3_end]
-t_fit = times_m[seg2_end+b:seg3_end-b]
 y = ilc_m[seg2_end:seg3_end]
-y_fit = ilc_m[seg2_end+b:seg3_end-b]
-p = np.polynomial.Polynomial.fit(t_fit, y_fit, deg=deg)
+p = np.polynomial.Polynomial.fit(t, y, deg=deg)
 y_smooth = p(t)
 
-# In the case of this segment, there is a lot of gnarly RFI, and the pulse itself is quite bright, so do some sigma-clipping
-new_y_fit = y_fit[np.abs(y_fit - p(t_fit))<0.003]
-new_t_fit = t_fit[np.abs(y_fit - p(t_fit))<0.003]
-
-p = np.polynomial.Polynomial.fit(new_t_fit, new_y_fit, deg=deg)
+# Sigma-clip
+y_fit = y[np.abs(y - p(t))<cutoff]
+t_fit = t[np.abs(y - p(t))<cutoff]
+p = np.polynomial.Polynomial.fit(t_fit, y_fit, deg=deg)
 y_smooth = p(t)
 
 if debugPoly is True:
@@ -755,24 +748,17 @@ if debugPoly is True:
                     imwidth=8)
 
 ilc_m[seg2_end:seg3_end] = y - y_smooth
-# And now flag the buffer
-ilc_m[seg2_end:seg2_end+b] = np.nan
-ilc_m[seg3_end-b:seg3_end] = np.nan
-qlc_m[seg2_end:seg2_end+b] = np.nan
-qlc_m[seg3_end-b:seg3_end] = np.nan
-ulc_m[seg2_end:seg2_end+b] = np.nan
-ulc_m[seg3_end-b:seg3_end] = np.nan
-vlc_m[seg2_end:seg2_end+b] = np.nan
-vlc_m[seg3_end-b:seg3_end] = np.nan
 
 # Segment 4
 vmin, vmax = -10, 60
 deg = 3
-#b = 10
 t = times_m[seg3_end:]
-t_fit = times_m[seg3_end+b:]#-b]
 y = ilc_m[seg3_end:]
-y_fit = ilc_m[seg3_end+b:]#-b]
+p = np.polynomial.Polynomial.fit(t, y, deg=deg)
+y_smooth = p(t)
+# Sigma-clip
+y_fit = y[np.abs(y - p(t))<cutoff]
+t_fit = t[np.abs(y - p(t))<cutoff]
 p = np.polynomial.Polynomial.fit(t_fit, y_fit, deg=deg)
 y_smooth = p(t)
 
@@ -788,15 +774,6 @@ if debugPoly is True:
                     imwidth=8)
 
 ilc_m[seg3_end:] = y - y_smooth
-# And now flag the buffer
-ilc_m[seg3_end:seg3_end+b] = np.nan
-ilc_m[-b:] = np.nan
-qlc_m[seg3_end:seg3_end+b] = np.nan
-qlc_m[-b:] = np.nan
-ulc_m[seg3_end:seg3_end+b] = np.nan
-ulc_m[-b:] = np.nan
-vlc_m[seg3_end:seg3_end+b] = np.nan
-vlc_m[-b:] = np.nan
 
 # Plot light curves
 vmin, vmax = -3, 20
