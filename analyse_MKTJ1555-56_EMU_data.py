@@ -31,10 +31,10 @@ makePhaseBin = False
 # ASKAP version -- doesn't work as bandwidth and S/N are too low
 makeIPSpec = False
 debugPoly = False
-makeJointIQUV = True
-makeJointSpectrum = True
-makeSpikySpectrum = False
-makeIPSpectrum = False
+makeJointIQUV = False
+makeJointSpectrum = False
+makeSpikySpectrum = True
+makeIPSpectrum = True
 tryBandSplit = False
 makeACF = False
 
@@ -847,7 +847,6 @@ make_lightcurve([times_mz, times_mz, times_mz],
                 ['Stokes Q', 'Stokes U', 'Stokes V'],
                 'MeerKAT_StokesQUV_pacorr_light_curve.png', offset=times_m[0])
 
-
 # Save MeerKAT data for Emil
 out = np.array([times_m[~np.isnan(ilc_m)]/(24*3600), ilc_m[~np.isnan(ilc_m)], np.nanstd(ilc_m)*np.ones(len(ilc_m[~np.isnan(ilc_m)]))])
 np.savetxt("MeerKAT_StokesI_light_curve.txt", out.T, fmt=['%5.8f', '%0.6f', '%0.5f'])
@@ -865,6 +864,7 @@ make_lightcurve([times_mz[indstart:indend], times_mz[indstart:indend], times_mz[
                 offset=times_m[indstart],
                 imwidth=5)
 
+# This one resembles the folded EMU data -- i.e. parallactic angle correction IS necessary
 make_lightcurve([times_mz[indstart:indend], times_mz[indstart:indend], times_mz[indstart:indend], times_mz[indstart:indend]],
                 [1000*ilc_m[indstart:indend], 1000*qlc_m_corr[indstart:indend], 1000*ulc_m_corr[indstart:indend], 1000*vlc_m[indstart:indend]],
                 vmin, vmax,
@@ -876,31 +876,31 @@ make_lightcurve([times_mz[indstart:indend], times_mz[indstart:indend], times_mz[
                 offset=times_m[indstart],
                 imwidth=5)
 
+# Old data problems, I think
 # Can we use this to constrain the RM and/or test whether there is Faraday rotation?
 # I noticed there is a nasty RFI spike in channel index 871
 # And values up to index 16 are not trustworthy
-Qt_m[:, 871] = np.nan
-Ut_m[:, 871] = np.nan
-Vt_m[:, 871] = np.nan
+#Qt_m[:, 871] = np.nan
+#Ut_m[:, 871] = np.nan
+#Vt_m[:, 871] = np.nan
 
-Qt_m[:, 0:17] = np.nan
-Ut_m[:, 0:17] = np.nan
-Vt_m[:, 0:17] = np.nan
-
+#Qt_m[:, 0:17] = np.nan
+#Ut_m[:, 0:17] = np.nan
+#Vt_m[:, 0:17] = np.nan
 
 # These are really only informative for finding RFI
-for i in range(indstart, indend):
-    if ilc_m[i] > 0.001:
-        fig = plt.figure(figsize=(8,5))
-        ax = fig.add_subplot(111)
-#        ax.plot(freqs_m, 1000*It_m[i], color = color["I"], lw=0.5,  label="Stokes I")
-        ax.plot(freqs_m, 1000*Qt_m[i], color = color["Q"], lw=0.5,  label="Stokes Q")
-        ax.plot(freqs_m, 1000*Ut_m[i], color = color["U"], lw=0.5,  label="Stokes U")
-        ax.plot(freqs_m, 1000*Vt_m[i], color = color["V"], lw=0.5,  label="Stokes V")
-        ax.set_xlabel("Frequency / GHz")
-        ax.set_ylabel("Flux density / mJy")
-        t = times_m[i]
-        fig.savefig(f"MeerKAT_IQUV_spectrum_{t}.png", bbox_inches="tight")
+#for i in range(indstart, indend):
+#    if ilc_m[i] > 0.001:
+#        fig = plt.figure(figsize=(8,5))
+#        ax = fig.add_subplot(111)
+##        ax.plot(freqs_m, 1000*It_m[i], color = color["I"], lw=0.5,  label="Stokes I")
+#        ax.plot(freqs_m, 1000*Qt_m[i], color = color["Q"], lw=0.5,  label="Stokes Q")
+#        ax.plot(freqs_m, 1000*Ut_m[i], color = color["U"], lw=0.5,  label="Stokes U")
+#        ax.plot(freqs_m, 1000*Vt_m[i], color = color["V"], lw=0.5,  label="Stokes V")
+#        ax.set_xlabel("Frequency / GHz")
+#        ax.set_ylabel("Flux density / mJy")
+#        t = times_m[i]
+#        fig.savefig(f"MeerKAT_IQUV_spectrum_{t}.png", bbox_inches="tight")
 
 # find the common time range
 
