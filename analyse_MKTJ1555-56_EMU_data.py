@@ -20,7 +20,7 @@ import sys
 
 from primary_beams import GaussianPB, MKCosBeam, get_beam_pos_mkt
 
-makeDynspec = False
+makeDynspec = True
 makeLightcurves = False
 makePaperDS = False
 makeFold = False
@@ -32,9 +32,11 @@ makePhaseBin = False
 makeIPSpec = False
 debugPoly = False
 makeJointIQUV = False
-makeJointSpectrum = False
+makeJointSpectrum = True
+makeJointSpectrumV = True
 makeSpikySpectrum = True
-makeIPSpectrum = True
+makeSecondIPSpectrumV = True
+makeSecondIPSpectrum = True
 tryBandSplit = False
 makeACF = False
 
@@ -62,6 +64,8 @@ a = 6
 # New ephemeris is centred on the main pulse
 phase_start = 0.44 + 0.5
 phase_end = 0.55 + 0.5 - 1
+
+box_properties = dict(boxstyle='round', facecolor='red', alpha=0.3, edgecolor='black')
 
 def ephem(n):
     return T0 + n*P
@@ -194,6 +198,11 @@ mkt["DS"][870:876,899:940,:] = np.nan
 freqs_m = mkt["FREQS"]/1.e9
 times_m = mkt["TIMES"]
 times_mz = mkt["TIMES"] - mkt["TIMES"][0]
+
+# Calculate parallactic angle to rotate Q and U correctly
+meerkat = Observer.at_site("salt")
+askap = Observer.at_site("mwa")
+pa_mkt = meerkat.parallactic_angle(Time(times_m/(24*3600), format='mjd', scale='utc'), source_sc)
 
 # ASKAP data correct transforms -- if data has not been modified by FixMS
 #polaxis = -45.0
@@ -478,7 +487,13 @@ Qt_m = np.real((-mkt["DS"][:,:,XY]-mkt["DS"][:,:,YX]))/2
 Ut_m = np.real((mkt["DS"][:,:,XX]-mkt["DS"][:,:,YY]))/2
 Vt_m = np.real((-1j*mkt["DS"][:,:,XY]+1j*mkt["DS"][:,:,YX]))/2
 
-# Original high-resolution data -- hopefully we will get a polarisation-calibrated version some day
+# Have available parallactic-angle corrected arrays
+# Have to tile pa_mkt to make it compatible 
+pa_mkt_tile = np.tile(pa_mkt[:, np.newaxis], (1, Qt_m.shape[1]))
+Qt_m_corr = Qt_m * np.cos(2*pa_mkt_tile) + Ut_m * np.sin(2*pa_mkt_tile)
+Ut_m_corr = Ut_m * np.cos(2*pa_mkt_tile) - Qt_m * np.sin(2*pa_mkt_tile)
+
+# These indices are the start and end of the main pulse
 indstart = 460
 indend = 510
 i = 22
@@ -499,8 +514,15 @@ if makeDynspec is True:
     make_dynspec(Vt_m[indstart:indend].T, vmin, vmax, cmap["V"], [times_mz[indstart], times_mz[indend], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesV_dynspec_zoom.png", imwidth=5)
 
 if makeSpikySpectrum is True:
-    bkg = np.tile(np.nanmean(np.vstack([It_m[indstart:indstart+17],It_m[indend-17:indend]]), axis=0), (indend-indstart-34, 1))
+# Make a spectral fit to the main pulse
+    bkg_full = np.tile(np.nanmean(np.vstack([It_m[indstart:indstart+17],It_m[indend-17:indend]]), axis=0), (indend-indstart, 1))
+    bkg = np.tile(np.nanmean(np.vstack([It_m[indstart:indstart+17],It_m[indend-17:indend]]), axis=0), (indend-indstart - 34, 1))
+    vmin, vmax = -0.005, 0.03
+    make_dynspec((It_m[indstart:indend]-bkg_full).T, vmin, vmax, cmap["I"], [times_mz[indstart], times_mz[indend], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesI_dynspec_spiky_zoom.png", imwidth=5)
     It_m_c = It_m[indstart+17:indend-17]-bkg
+    Qt_m_c = Qt_m_corr[indstart+17:indend-17]
+    Ut_m_c = Ut_m_corr[indstart+17:indend-17]
+    Vt_m_c = Vt_m[indstart+17:indend-17]
 
     weights = np.nanmean(It_m_c, axis=1)
 # Sanity check
@@ -509,7 +531,7 @@ if makeSpikySpectrum is True:
     ax.plot(weights)
     ax.set_xlabel("index")
     ax.set_ylabel("Stokes I light curve just of spiky pulse")
-    fig.savefig("test_weights.png", bbox_inches="tight")
+    fig.savefig("test_mp_weights.png", bbox_inches="tight")
     
 # Remove any negative (and indeed low) weight points, and normalise
     weights[weights<0.005] = 0.
@@ -518,7 +540,13 @@ if makeSpikySpectrum is True:
     weights = np.tile(weights[:,None], (1,len(freqs_m)))
 
     I_m_c = np.nansum(np.squeeze(It_m_c)*weights, axis=0)/np.nansum(weights,axis=0)
+    Q_m_c = np.nansum(np.squeeze(Qt_m_c)*weights, axis=0)/np.nansum(weights,axis=0)
+    U_m_c = np.nansum(np.squeeze(Ut_m_c)*weights, axis=0)/np.nansum(weights,axis=0)
+    V_m_c = np.nansum(np.squeeze(Vt_m_c)*weights, axis=0)/np.nansum(weights,axis=0)
     I_m_c[I_m_c==0] = np.nan
+    Q_m_c[Q_m_c==0] = np.nan
+    U_m_c[U_m_c==0] = np.nan
+    V_m_c[V_m_c==0] = np.nan
 
 # Not enough S/N in raw spectrum for a fit, but let's break it down into some segments
 # Bin the data
@@ -532,20 +560,17 @@ if makeSpikySpectrum is True:
                          np.nanstd(I_m_c[ib[3]:ib[4]])/np.sqrt(len(I_m_c[ib[3]:ib[4]][~np.isnan(I_m_c[ib[3]:ib[4]])])),
                          np.nanstd(I_m_c[ib[4]:])/np.sqrt(len(I_m_c[ib[4]:][~np.isnan(I_m_c[ib[4]:])]))])
 
-# Fit to those data
-# Skip the first bin because it's obviously not great
-
-    model = (pl, (1000*np.median(I_m_b[1:]), -0.7), 'Power Law')
+    model = (pl, (1000*np.median(I_m_b), -0.7), 'Power Law')
 
     nu = np.geomspace(.890, 1.700, 100)
     fit_func = model[0]
     fit_p0 = model[1]
     fit_res = curve_fit(
         fit_func,
-        freqs_m_b[1:],
-        1000*I_m_b[1:],
+        freqs_m_b,
+        1000*I_m_b,
         fit_p0,
-        sigma=1000*err_m_b[1:],
+        sigma=1000*err_m_b,
         absolute_sigma=True
     )
 
@@ -570,14 +595,14 @@ if makeSpikySpectrum is True:
     q16, q50, q84 = np.percentile(models, [16, 50, 84], axis=1)
 
 
-    fig = plt.figure(figsize=(8*cm,8*cm))
+    fig = plt.figure(figsize=(5*cm,5*cm))
     ax = fig.add_subplot(111)
     ax.scatter(freqs_m, 1000*I_m_c, color='purple', alpha=0.3, marker='.', s=2, lw=0.5, zorder=10)
     ax.scatter(freqs_m_b, 1000*I_m_b, color='purple', alpha=0.9, marker='.', s=6, lw=0.5, zorder=10, label="MeerKAT")
     ax.errorbar(freqs_m_b, 1000*I_m_b, yerr=1000*err_m_b, color='purple', alpha=0.9, elinewidth=0.5, lw=0, zorder=5)
-    ax.axvspan(freqs_m[50],freqs_m[190], color='yellow', alpha=0.15)
-    ax.axvspan(freqs_m[400], freqs_m[600], color='yellow', alpha=0.15)
-    ax.axvspan(freqs_m[800], freqs_m[-1], color='yellow', alpha=0.15)
+    ax.axvspan(freqs_m[ib[0]],freqs_m[ib[1]], color='yellow', alpha=0.15)
+    ax.axvspan(freqs_m[ib[2]], freqs_m[ib[3]], color='yellow', alpha=0.15)
+    ax.axvspan(freqs_m[ib[4]], freqs_m[-1], color='yellow', alpha=0.15)
     ax.plot(
         nu,
         q50,
@@ -592,14 +617,256 @@ if makeSpikySpectrum is True:
     )
     ax.set_ylabel("Weighted brightness (mJy)")
     ax.set_xlabel("Frequency / GHz")
-    ax.set_ylim(5,35)
+    ax.set_ylim(3,30)
     ax.set_xscale('log')
     ax.set_yscale('log')
     ax.yaxis.set_major_formatter(StrMethodFormatter("{x:.0f}"))
     ax.yaxis.set_minor_formatter(StrMethodFormatter("{x:.0f}"))
     ax.xaxis.set_major_formatter(StrMethodFormatter("{x:.1f}"))
     ax.xaxis.set_minor_formatter(StrMethodFormatter("{x:.1f}"))
+    ax.text(0.1, 0.1, "$\\alpha = {0:3.2f}\pm{1:3.2f}$".format(pla, err_p[1]), transform=ax.transAxes,bbox=box_properties)
     fig.savefig("Spiky_pulse_spectrum.png", bbox_inches="tight", dpi=300)
+    fig.savefig("MeerKAT_main_pulse_spectrum.pdf", bbox_inches="tight", dpi=300)
+
+    # RMS can be taken from first third of observation before the main pulse arrives
+    rms_arr = np.nanstd(Qt_m_corr[:int(Qt_m_corr.shape[1]/3),:], axis=0)
+# Save the spiky pulse data so we can perform RM synthesis
+    out = np.array([freqs_m[~np.isnan(I_m_c)]*1.e9, I_m_c[~np.isnan(I_m_c)], Q_m_c[~np.isnan(I_m_c)], U_m_c[~np.isnan(I_m_c)], rms_arr[~np.isnan(I_m_c)], rms_arr[~np.isnan(I_m_c)], rms_arr[~np.isnan(I_m_c)]])
+    np.savetxt("MeerKAT_IQU_spectrum.txt", out.T)
+
+if makeSecondIPSpectrumV is True:
+    indstart, indend = 763, 863
+# Make a spectral fit to the second IP detected by MeerKAT
+    bkg_full = np.tile(np.nanmean(np.vstack([It_m[indstart:indstart+17],It_m[indend-17:indend]]), axis=0), (indend-indstart, 1))
+    bkg = np.tile(np.nanmean(np.vstack([It_m[indstart:indstart+17],It_m[indend-17:indend]]), axis=0), (indend-indstart-34, 1))
+    vmin, vmax = -0.005, 0.03
+    make_dynspec((It_m[indstart:indend]-bkg_full).T, vmin, vmax, cmap["I"], [times_mz[indstart], times_mz[indend], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesI_dynspec_IP2_zoom.png", imwidth=5)
+    It_m_c = It_m[indstart+17:indend-17]-bkg
+    Qt_m_c = Qt_m_corr[indstart+17:indend-17]
+    Ut_m_c = Ut_m_corr[indstart+17:indend-17]
+    Vt_m_c = Vt_m[indstart+17:indend-17]
+# Let's just fit to Stokes V! The source has 100% circ pol and the background is way better behaved
+    make_dynspec(-Vt_m[indstart:indend].T, vmin, vmax, cmap["V"], [times_mz[indstart], times_mz[indend], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesI_dynspec_IP2_StokesV_zoom.png", imwidth=5)
+
+    weights = np.nanmean(-Vt_m_c, axis=1)
+# Sanity check
+    fig = plt.figure(figsize=(5,5))
+    ax = fig.add_subplot(111)
+    ax.plot(weights)
+    ax.set_xlabel("index")
+    ax.set_ylabel("-Stokes V light curve of 2nd interpulse")
+    fig.savefig("test_weights.png", bbox_inches="tight")
+    
+# Remove any negative (and indeed low) weight points, and normalise
+    weights[weights<0.0025] = 0.
+    weights /= np.nanmax(weights)
+# We need to tile it to have the frequency dimension
+    weights = np.tile(weights[:,None], (1,len(freqs_m)))
+
+    I_m_c = np.nansum(np.squeeze(It_m_c)*weights, axis=0)/np.nansum(weights,axis=0)
+    Q_m_c = np.nansum(np.squeeze(Qt_m_c)*weights, axis=0)/np.nansum(weights,axis=0)
+    U_m_c = np.nansum(np.squeeze(Ut_m_c)*weights, axis=0)/np.nansum(weights,axis=0)
+    V_m_c = -np.nansum(np.squeeze(Vt_m_c)*weights, axis=0)/np.nansum(weights,axis=0)
+    I_m_c[I_m_c==0] = np.nan
+    Q_m_c[Q_m_c==0] = np.nan
+    U_m_c[U_m_c==0] = np.nan
+    V_m_c[V_m_c==0] = np.nan
+
+# Not enough S/N in raw spectrum for a fit, but let's break it down into some segments
+# Bin the data
+    ib = [110, 240, 470, 700, 860]
+    V_m_b = np.hstack([np.nanmean(V_m_c[:ib[0]]), np.nanmean(V_m_c[ib[0]:ib[1]]), np.nanmean(V_m_c[ib[1]:ib[2]]), np.nanmean(V_m_c[ib[2]:ib[3]]), np.nanmean(V_m_c[ib[3]:ib[4]]), np.nanmean(V_m_c[ib[4]:])])
+    freqs_m_b = np.hstack([np.nanmean(freqs_m[:ib[0]][~np.isnan(V_m_c[:ib[0]])]), np.nanmean(freqs_m[ib[0]:ib[1]][~np.isnan(V_m_c[ib[0]:ib[1]])]), np.nanmean(freqs_m[ib[1]:ib[2]][~np.isnan(V_m_c[ib[1]:ib[2]])]), np.nanmean(freqs_m[ib[2]:ib[3]][~np.isnan(V_m_c[ib[2]:ib[3]])]), np.nanmean(freqs_m[ib[3]:ib[4]][~np.isnan(V_m_c[ib[3]:ib[4]])]), np.nanmean(freqs_m[ib[4]:][~np.isnan(V_m_c[ib[4]:])])])
+    err_m_b = np.hstack([np.nanstd(V_m_c[:ib[0]])/np.sqrt(len(V_m_c[:ib[0]][~np.isnan(V_m_c[:ib[0]])])),
+                         np.nanstd(V_m_c[ib[0]:ib[1]])/np.sqrt(len(V_m_c[ib[0]:ib[1]][~np.isnan(V_m_c[ib[0]:ib[1]])])),
+                         np.nanstd(V_m_c[ib[1]:ib[2]])/np.sqrt(len(V_m_c[ib[1]:ib[2]][~np.isnan(V_m_c[ib[1]:ib[2]])])),
+                         np.nanstd(V_m_c[ib[2]:ib[3]])/np.sqrt(len(V_m_c[ib[2]:ib[3]][~np.isnan(V_m_c[ib[2]:ib[3]])])),
+                         np.nanstd(V_m_c[ib[3]:ib[4]])/np.sqrt(len(V_m_c[ib[3]:ib[4]][~np.isnan(V_m_c[ib[3]:ib[4]])])),
+                         np.nanstd(V_m_c[ib[4]:])/np.sqrt(len(V_m_c[ib[4]:][~np.isnan(V_m_c[ib[4]:])]))])
+
+    model = (pl, (1000*np.median(V_m_b), -0.7), 'Power Law')
+
+    nu = np.geomspace(.890, 1.700, 100)
+    fit_func = model[0]
+    fit_p0 = model[1]
+    fit_res = curve_fit(
+        fit_func,
+        freqs_m_b,
+        1000*V_m_b,
+        fit_p0,
+        sigma=1000*err_m_b,
+        absolute_sigma=True
+    )
+
+    best_p = fit_res[0]
+    pla = best_p[1]
+    plS = pl(1, *best_p)
+
+    covar = fit_res[1]
+    err_p = np.sqrt(np.diag(covar))
+
+    print("Power-law fit parameters to MeerKAT 2nd interpulse using Stokes V: S at 1 GHz = {0:3.2f}+/-{2:3.2f}mJy, alpha = {1:3.2f}+/-{3:3.2f}".format(plS, pla, err_p[0], err_p[1]))
+
+    no_samps = 1000
+    samps = np.random.multivariate_normal(
+        fit_res[0], fit_res[1], size=no_samps
+    ).swapaxes(0,1)
+
+    models = pl(
+        nu[:, None],
+        *samps
+    )
+    q16, q50, q84 = np.percentile(models, [16, 50, 84], axis=1)
+
+
+    fig = plt.figure(figsize=(5*cm,5*cm))
+    ax = fig.add_subplot(111)
+    ax.scatter(freqs_m, 1000*V_m_c, color='purple', alpha=0.3, marker='.', s=2, lw=0.5, zorder=10)
+    ax.scatter(freqs_m_b, 1000*V_m_b, color='purple', alpha=0.9, marker='.', s=6, lw=0.5, zorder=10, label="MeerKAT")
+    ax.errorbar(freqs_m_b, 1000*V_m_b, yerr=1000*err_m_b, color='purple', alpha=0.9, elinewidth=0.5, lw=0, zorder=5)
+    ax.axvspan(freqs_m[ib[0]],freqs_m[ib[1]], color='yellow', alpha=0.15)
+    ax.axvspan(freqs_m[ib[2]], freqs_m[ib[3]], color='yellow', alpha=0.15)
+    ax.axvspan(freqs_m[ib[4]], freqs_m[-1], color='yellow', alpha=0.15)
+    ax.plot(
+        nu,
+        q50,
+        lw=0.5,
+        color='red',
+    )
+    ax.fill_between(
+        nu,
+        q16, q84,
+        alpha=0.3,
+        color='red'
+    )
+    ax.set_ylabel("Weighted brightness (mJy)")
+    ax.set_xlabel("Frequency / GHz")
+    ax.set_ylim(3,30)
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.yaxis.set_major_formatter(StrMethodFormatter("{x:.0f}"))
+    ax.yaxis.set_minor_formatter(StrMethodFormatter("{x:.0f}"))
+    ax.xaxis.set_major_formatter(StrMethodFormatter("{x:.1f}"))
+    ax.xaxis.set_minor_formatter(StrMethodFormatter("{x:.1f}"))
+    ax.text(0.1, 0.1, "$\\alpha = {0:3.2f}\pm{1:3.2f}$".format(pla, err_p[1]), transform=ax.transAxes,bbox=box_properties)
+    fig.savefig("IP2_pulse_spectrum.png", bbox_inches="tight", dpi=300)
+    fig.savefig("MeerKAT_interpulse_spectrum.pdf", bbox_inches="tight", dpi=300)
+
+if makeSecondIPSpectrum is True:
+    indstart, indend = 763, 863
+# Make a spectral fit to the second IP detected by MeerKAT
+    bkg_full = np.tile(np.nanmean(np.vstack([It_m[indstart:indstart+17],It_m[indend-17:indend]]), axis=0), (indend-indstart, 1))
+    bkg = np.tile(np.nanmean(np.vstack([It_m[indstart:indstart+17],It_m[indend-17:indend]]), axis=0), (indend-indstart-34, 1))
+    vmin, vmax = -0.005, 0.03
+    make_dynspec((It_m[indstart:indend]-bkg_full).T, vmin, vmax, cmap["I"], [times_mz[indstart], times_mz[indend], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesI_dynspec_IP2_zoom.png", imwidth=5)
+    It_m_c = It_m[indstart+17:indend-17]#-bkg
+    Qt_m_c = Qt_m_corr[indstart+17:indend-17]
+    Ut_m_c = Ut_m_corr[indstart+17:indend-17]
+    Vt_m_c = Vt_m[indstart+17:indend-17]
+
+    weights = np.nanmean(It_m_c, axis=1)
+# Sanity check
+    fig = plt.figure(figsize=(5,5))
+    ax = fig.add_subplot(111)
+    ax.plot(weights)
+    ax.set_xlabel("index")
+    ax.set_ylabel("Stokes I light curve of 2nd interpulse")
+    fig.savefig("test_weights_I.png", bbox_inches="tight")
+    
+# Remove any negative (and indeed low) weight points, and normalise
+    weights[weights<0.0025] = 0.
+    weights /= np.nanmax(weights)
+# We need to tile it to have the frequency dimension
+    weights = np.tile(weights[:,None], (1,len(freqs_m)))
+
+    I_m_c = np.nansum(np.squeeze(It_m_c)*weights, axis=0)/np.nansum(weights,axis=0)
+    Q_m_c = np.nansum(np.squeeze(Qt_m_c)*weights, axis=0)/np.nansum(weights,axis=0)
+    U_m_c = np.nansum(np.squeeze(Ut_m_c)*weights, axis=0)/np.nansum(weights,axis=0)
+    V_m_c = -np.nansum(np.squeeze(Vt_m_c)*weights, axis=0)/np.nansum(weights,axis=0)
+    I_m_c[I_m_c==0] = np.nan
+    Q_m_c[Q_m_c==0] = np.nan
+    U_m_c[U_m_c==0] = np.nan
+    V_m_c[V_m_c==0] = np.nan
+
+# Not enough S/N in raw spectrum for a fit, but let's break it down into some segments
+# Bin the data
+    ib = [110, 240, 470, 700, 860]
+    I_m_b = np.hstack([np.nanmean(I_m_c[:ib[0]]), np.nanmean(I_m_c[ib[0]:ib[1]]), np.nanmean(I_m_c[ib[1]:ib[2]]), np.nanmean(I_m_c[ib[2]:ib[3]]), np.nanmean(I_m_c[ib[3]:ib[4]]), np.nanmean(I_m_c[ib[4]:])])
+    freqs_m_b = np.hstack([np.nanmean(freqs_m[:ib[0]][~np.isnan(I_m_c[:ib[0]])]), np.nanmean(freqs_m[ib[0]:ib[1]][~np.isnan(I_m_c[ib[0]:ib[1]])]), np.nanmean(freqs_m[ib[1]:ib[2]][~np.isnan(I_m_c[ib[1]:ib[2]])]), np.nanmean(freqs_m[ib[2]:ib[3]][~np.isnan(I_m_c[ib[2]:ib[3]])]), np.nanmean(freqs_m[ib[3]:ib[4]][~np.isnan(I_m_c[ib[3]:ib[4]])]), np.nanmean(freqs_m[ib[4]:][~np.isnan(I_m_c[ib[4]:])])])
+    err_m_b = np.hstack([np.nanstd(I_m_c[:ib[0]])/np.sqrt(len(I_m_c[:ib[0]][~np.isnan(I_m_c[:ib[0]])])),
+                         np.nanstd(I_m_c[ib[0]:ib[1]])/np.sqrt(len(I_m_c[ib[0]:ib[1]][~np.isnan(I_m_c[ib[0]:ib[1]])])),
+                         np.nanstd(I_m_c[ib[1]:ib[2]])/np.sqrt(len(I_m_c[ib[1]:ib[2]][~np.isnan(I_m_c[ib[1]:ib[2]])])),
+                         np.nanstd(I_m_c[ib[2]:ib[3]])/np.sqrt(len(I_m_c[ib[2]:ib[3]][~np.isnan(I_m_c[ib[2]:ib[3]])])),
+                         np.nanstd(I_m_c[ib[3]:ib[4]])/np.sqrt(len(I_m_c[ib[3]:ib[4]][~np.isnan(I_m_c[ib[3]:ib[4]])])),
+                         np.nanstd(I_m_c[ib[4]:])/np.sqrt(len(I_m_c[ib[4]:][~np.isnan(I_m_c[ib[4]:])]))])
+
+    model = (pl, (1000*np.median(I_m_b), -0.7), 'Power Law')
+
+    nu = np.geomspace(.890, 1.700, 100)
+    fit_func = model[0]
+    fit_p0 = model[1]
+    fit_res = curve_fit(
+        fit_func,
+        freqs_m_b,
+        1000*I_m_b,
+        fit_p0,
+        sigma=1000*err_m_b,
+        absolute_sigma=True
+    )
+
+    best_p = fit_res[0]
+    pla = best_p[1]
+    plS = pl(1, *best_p)
+
+    covar = fit_res[1]
+    err_p = np.sqrt(np.diag(covar))
+
+    print("Power-law fit parameters to MeerKAT 2nd interpulse using Stokes I: S at 1 GHz = {0:3.2f}+/-{2:3.2f}mJy, alpha = {1:3.2f}+/-{3:3.2f}".format(plS, pla, err_p[0], err_p[1]))
+
+    no_samps = 1000
+    samps = np.random.multivariate_normal(
+        fit_res[0], fit_res[1], size=no_samps
+    ).swapaxes(0,1)
+
+    models = pl(
+        nu[:, None],
+        *samps
+    )
+    q16, q50, q84 = np.percentile(models, [16, 50, 84], axis=1)
+
+
+    fig = plt.figure(figsize=(5*cm,5*cm))
+    ax = fig.add_subplot(111)
+    ax.scatter(freqs_m, 1000*I_m_c, color='purple', alpha=0.3, marker='.', s=2, lw=0.5, zorder=10)
+    ax.scatter(freqs_m_b, 1000*I_m_b, color='purple', alpha=0.9, marker='.', s=6, lw=0.5, zorder=10, label="MeerKAT")
+    ax.errorbar(freqs_m_b, 1000*I_m_b, yerr=1000*err_m_b, color='purple', alpha=0.9, elinewidth=0.5, lw=0, zorder=5)
+    ax.axvspan(freqs_m[ib[0]],freqs_m[ib[1]], color='yellow', alpha=0.15)
+    ax.axvspan(freqs_m[ib[2]], freqs_m[ib[3]], color='yellow', alpha=0.15)
+    ax.axvspan(freqs_m[ib[4]], freqs_m[-1], color='yellow', alpha=0.15)
+    ax.plot(
+        nu,
+        q50,
+        lw=0.5,
+        color='red',
+    )
+    ax.fill_between(
+        nu,
+        q16, q84,
+        alpha=0.3,
+        color='red'
+    )
+    ax.set_ylabel("Weighted brightness (mJy)")
+    ax.set_xlabel("Frequency / GHz")
+    ax.set_ylim(3,30)
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.yaxis.set_major_formatter(StrMethodFormatter("{x:.0f}"))
+    ax.yaxis.set_minor_formatter(StrMethodFormatter("{x:.0f}"))
+    ax.xaxis.set_major_formatter(StrMethodFormatter("{x:.1f}"))
+    ax.xaxis.set_minor_formatter(StrMethodFormatter("{x:.1f}"))
+    ax.text(0.1, 0.1, "$\\alpha = {0:3.2f}\pm{1:3.2f}$".format(pla, err_p[1]), transform=ax.transAxes,bbox=box_properties)
+    fig.savefig("IP2_pulse_spectrum_I.png", bbox_inches="tight", dpi=300)
+    fig.savefig("MeerKAT_interpulse_spectrum_StokesI.pdf", bbox_inches="tight", dpi=300)
 
 if tryBandSplit is True:
 # Clean up baseline
@@ -642,11 +909,6 @@ if tryBandSplit is True:
     axr.plot(times_mz[indstart:indend], ilc_low_norm - ilc_high_norm, lw=0.5, color='black', alpha=0.8, label='Difference')
     fig.savefig("substructure_band_comparison.png", bbox_inches="tight")
 
-# Perform parallactic angle correction to rotate Q and U correctly
-meerkat = Observer.at_site("salt")
-askap = Observer.at_site("mwa")
-
-pa_mkt = meerkat.parallactic_angle(Time(times_m/(24*3600), format='mjd', scale='utc'), source_sc)
 
 # Form light curves
 ilc_m = np.nanmean(It_m, axis=1)
@@ -657,7 +919,7 @@ vlc_m = np.nanmean(Vt_m, axis=1)
 qlc_m_corr = qlc_m * np.cos(2*pa_mkt) + ulc_m * np.sin(2*pa_mkt)
 ulc_m_corr = ulc_m * np.cos(2*pa_mkt) - qlc_m * np.sin(2*pa_mkt)
 # I think according to Alec's slides it's slightly different
-ulc_m_corr_alec = qlc_m * np.sin(2*pa_mkt) - ulc_m * np.cos(2*pa_mkt)
+# ulc_m_corr_alec = qlc_m * np.sin(2*pa_mkt) - ulc_m * np.cos(2*pa_mkt)
 
 # Sanity check
 fig = plt.figure(figsize=(5,8))
@@ -670,7 +932,7 @@ ax.legend()
 ax2 = fig.add_subplot(412)
 ax2.plot(times_m, qlc_m_corr, label='Stokes Q corrected', lw=0.5, color=color['Q'])
 ax2.plot(times_m, ulc_m_corr, label='Stokes U corrected', lw=0.5, color=color['U'])
-ax2.plot(times_m, ulc_m_corr_alec, label='Stokes U Alec', lw=0.5)
+#ax2.plot(times_m, ulc_m_corr_alec, label='Stokes U Alec', lw=0.5)
 ax2.set_ylim([-0.005,0.005])
 ax2.set_ylabel("$S$ / Jy")
 ax2.legend()
@@ -763,7 +1025,7 @@ if debugPoly is True:
 ilc_m[seg1_end:seg2_end] = y - y_smooth
 
 # This segment is nice and clean so let's estimate the RMS noise
-rms = 1000*np.nanstd(ilc_m[seg1_end:seg2_end])
+rms = 1000*np.nanstd(ilc_m[seg1_end+5:seg2_end-5])
 print(f"Typical noise of MeerKAT light curves is {rms:2.2f}mJy/beam")
 
 
@@ -848,7 +1110,8 @@ make_lightcurve([times_mz, times_mz, times_mz],
                 'MeerKAT_StokesQUV_pacorr_light_curve.png', offset=times_m[0])
 
 # Save MeerKAT data for Emil
-out = np.array([times_m[~np.isnan(ilc_m)]/(24*3600), ilc_m[~np.isnan(ilc_m)], np.nanstd(ilc_m)*np.ones(len(ilc_m[~np.isnan(ilc_m)]))])
+# Make sure you pick somewhere that has no signal to calculate rms
+out = np.array([times_m[~np.isnan(ilc_m)]/(24*3600), ilc_m[~np.isnan(ilc_m)], (rms/1000)*np.ones(len(ilc_m[~np.isnan(ilc_m)]))])
 np.savetxt("MeerKAT_StokesI_light_curve.txt", out.T, fmt=['%5.8f', '%0.6f', '%0.5f'])
 
 # That interesting section of microstructure
@@ -953,7 +1216,9 @@ if makeJointSpectrum is True:
     make_dynspec(It[ind_a[0][0]-24:ind_a[-1][0]+24,:].T, vmin, vmax, cmap["I"], [times_az[ind_a[0][0]-24], times_az[ind_a[-1][0]+24], freqs_a[0], freqs_a[-1]], "EMU_StokesI_joint_pulse_zoom.png", imwidth=5)
 
 # Clearly need to do some background subtraction for the MeerKAT data
-    bkg = np.nanmean([np.nanmean(It_m[ind_m[0][0]-4:ind_m[0][0],:], axis=0), np.nanmean(It_m[ind_m[-1][0]:ind_m[-1][0]+4,:], axis=0)], axis=0)
+    #bkg = np.nanmean([np.nanmean(It_m[ind_m[0][0]-4:ind_m[0][0],:], axis=0), np.nanmean(It_m[ind_m[-1][0]:ind_m[-1][0]+4,:], axis=0)], axis=0)
+# Try adjusting where the background is measured and see how sensitive it is
+    bkg = np.nanmean([np.nanmean(It_m[ind_m[0][0]-10:ind_m[0][0]-1,:], axis=0), np.nanmean(It_m[ind_m[-1][0]+1:ind_m[-1][0]+10,:], axis=0)], axis=0)
 # This is now 930 channel array, need to subtract a tiled version, just like calculating the weights)
     bkg_for_plot = np.tile(bkg, (len(ind_m)+59,1))
     bkg = np.tile(bkg, (len(ind_m),1))
@@ -968,7 +1233,6 @@ if makeJointSpectrum is True:
 # We need to tile it to have the frequency dimension
     weights_a = np.tile(weights_a, len(freqs_a))
 
-
     I_a = np.nansum(np.squeeze(It[ind_a,:])*weights_a, axis=0)/np.nansum(weights_a,axis=0)
 
     weights_m = ilc_m[ind_m]
@@ -976,7 +1240,9 @@ if makeJointSpectrum is True:
     # Normalise the weights to 1 as this will be useful later
     weights_m /= np.nanmax(weights_m)
     weights_m = np.tile(weights_m, len(freqs_m))
-    I_m = np.nansum((np.squeeze(It_m[ind_m,:])-bkg)*weights_m, axis=0)/np.nansum(weights_m,axis=0)
+    I_m = np.nansum((np.squeeze(It_m[ind_m,:]))*weights_m, axis=0)/np.nansum(weights_m,axis=0)
+# Try not using background for now
+    #I_m = np.nansum((np.squeeze(It_m[ind_m,:])-bkg)*weights_m, axis=0)/np.nansum(weights_m,axis=0)
 
     I_a[I_a==0] = np.nan
     I_m[I_m==0] = np.nan
@@ -1032,7 +1298,7 @@ if makeJointSpectrum is True:
     )
     q16, q50, q84 = np.percentile(models, [16, 50, 84], axis=1)
 
-    fig = plt.figure(figsize=(8*cm,8*cm))
+    fig = plt.figure(figsize=(5*cm,5*cm))
     ax = fig.add_subplot(111)
     ax.scatter(freqs_m, 1000*I_m, color='purple', alpha=0.3, marker='.', s=2, lw=0.5, zorder=10)
     ax.scatter(freqs_m_b, 1000*I_m_b, color='purple', alpha=0.9, marker='.', s=6, lw=0.5, zorder=10, label="MeerKAT")
@@ -1071,8 +1337,152 @@ if makeJointSpectrum is True:
     ax.xaxis.set_major_formatter(StrMethodFormatter("{x:.1f}"))
     ax.xaxis.set_minor_formatter(StrMethodFormatter("{x:.1f}"))
 
+    ax.text(0.1, 0.1, "$\\alpha = {0:3.2f}\pm{1:3.2f}$".format(pla, err_p[1]), transform=ax.transAxes,bbox=box_properties)
     fig.savefig("Joint_spectrum.pdf", bbox_inches="tight", dpi=300)
     fig.savefig("Joint_spectrum.png", bbox_inches="tight", dpi=300)
+
+if makeJointSpectrumV is True:
+# Try doing the same again but with Stokes V and no background subtraction, to see if we get the same result
+    ind_a = np.argwhere(np.logical_and(times_a<spec_end, times_a>spec_start))
+    ind_m = np.argwhere(np.logical_and(times_m<spec_end, times_m>spec_start))
+
+# First look at the dynamic spectra in this specific range
+    vmin, vmax = -0.005, 0.03
+# Closest in match is ... 40? = 4 timesteps for ASKAP, 5 timesteps for MeerKAT
+    make_dynspec(-Vt_m[ind_m[0][0]-30:ind_m[-1][0]+30,:].T, vmin, vmax, cmap["V"], [times_mz[ind_m[0][0]-30], times_mz[ind_m[-1][0]+30], freqs_m[0], freqs_m[-1]], "MeerKAT_StokesV_joint_pulse_zoom.png", imwidth=5)
+    make_dynspec(-Vt[ind_a[0][0]-24:ind_a[-1][0]+24,:].T, vmin, vmax, cmap["V"], [times_az[ind_a[0][0]-24], times_az[ind_a[-1][0]+24], freqs_a[0], freqs_a[-1]], "EMU_StokesV_joint_pulse_zoom.png", imwidth=5)
+
+# Stokes V -- can skip backgruond subtraction
+
+# This is just a 5-point weighting function
+    weights_a = -vlc_a[ind_a]
+# Sanity check
+    fig = plt.figure(figsize=(5,5))
+    ax = fig.add_subplot(111)
+    ax.plot(weights_a)
+    ax.set_xlabel("index")
+    ax.set_ylabel("Stokes V light curve just of joint inter pulse")
+    ax.axhline(0.006)
+    fig.savefig("EMU_test_ip_weights.png", bbox_inches="tight")
+# Remove any negative weight points, and normalise
+    weights_a[weights_a<0.006] = 0.
+    weights_a /= np.nanmax(weights_a)
+# We need to tile it to have the frequency dimension
+    weights_a = np.tile(weights_a, len(freqs_a))
+
+    V_a = np.nansum(np.squeeze(-Vt[ind_a,:])*weights_a, axis=0)/np.nansum(weights_a,axis=0)
+
+    weights_m = -vlc_m[ind_m]
+# Sanity check
+    fig = plt.figure(figsize=(5,5))
+    ax = fig.add_subplot(111)
+    ax.plot(weights_m)
+    ax.axhline(0.006)
+    ax.set_xlabel("index")
+    ax.set_ylabel("Stokes V light curve just of joint inter pulse")
+    fig.savefig("MeerKAT_test_ip_weights.png", bbox_inches="tight")
+    weights_m[weights_m<0.006] = 0.
+    # Normalise the weights to 1 as this will be useful later
+    weights_m /= np.nanmax(weights_m)
+    weights_m = np.tile(weights_m, len(freqs_m))
+    V_m = np.nansum((np.squeeze(-Vt_m[ind_m,:]))*weights_m, axis=0)/np.nansum(weights_m,axis=0)
+
+    V_a[V_a==0] = np.nan
+    V_m[V_m==0] = np.nan
+
+# Not enough S/N in raw spectrum for a fit, but let's break it down into some segments
+    ib = [110, 240, 470, 700, 860]
+# Bin the data
+    V_m_b = np.hstack([np.nanmean(V_m[:ib[0]]), np.nanmean(V_m[ib[0]:ib[1]]), np.nanmean(V_m[ib[1]:ib[2]]), np.nanmean(V_m[ib[2]:ib[3]]), np.nanmean(V_m[ib[3]:ib[4]]), np.nanmean(V_m[ib[4]:])])
+    freqs_m_b = np.hstack([np.nanmean(freqs_m[:ib[0]][~np.isnan(V_m[:ib[0]])]), np.nanmean(freqs_m[ib[0]:ib[1]][~np.isnan(V_m[ib[0]:ib[1]])]), np.nanmean(freqs_m[ib[1]:ib[2]][~np.isnan(V_m[ib[1]:ib[2]])]), np.nanmean(freqs_m[ib[2]:ib[3]][~np.isnan(V_m[ib[2]:ib[3]])]), np.nanmean(freqs_m[ib[3]:ib[4]][~np.isnan(V_m[ib[3]:ib[4]])]), np.nanmean(freqs_m[ib[4]:][~np.isnan(V_m[ib[4]:])])])
+    err_m_b = np.hstack([np.nanstd(V_m[:ib[0]])/np.sqrt(len(V_m[:ib[0]][~np.isnan(V_m[:ib[0]])])),
+                         np.nanstd(V_m[ib[0]:ib[1]])/np.sqrt(len(V_m[ib[0]:ib[1]][~np.isnan(V_m[ib[0]:ib[1]])])),
+                         np.nanstd(V_m[ib[1]:ib[2]])/np.sqrt(len(V_m[ib[1]:ib[2]][~np.isnan(V_m[ib[1]:ib[2]])])),
+                         np.nanstd(V_m[ib[2]:ib[3]])/np.sqrt(len(V_m[ib[2]:ib[3]][~np.isnan(V_m[ib[2]:ib[3]])])),
+                         np.nanstd(V_m[ib[3]:ib[4]])/np.sqrt(len(V_m[ib[3]:ib[4]][~np.isnan(V_m[ib[3]:ib[4]])])),
+                         np.nanstd(V_m[ib[4]:])/np.sqrt(len(V_m[ib[4]:][~np.isnan(V_m[ib[4]:])]))])
+    V_a_b = np.nanmean(V_a)
+    freqs_a_b = np.nanmean(freqs_a[~np.isnan(V_a)])
+    err_a_b = np.nanstd(V_a)/np.sqrt(len(V_a[~np.isnan(V_a)]))
+
+# Fit to those data
+
+    model = (pl, (1000*np.median(V_a_b), -0.7), 'Power Law')
+
+    nu = np.geomspace(.890, 1.700, 100)
+    fit_func = model[0]
+    fit_p0 = model[1]
+    fit_res = curve_fit(
+        fit_func,
+        np.hstack([freqs_m_b,freqs_a_b]),
+        1000*np.hstack([V_m_b, V_a_b]),
+        fit_p0,
+        sigma=1000*np.hstack([err_m_b,err_a_b]),
+        absolute_sigma=True
+    )
+
+    best_p = fit_res[0]
+    pla = best_p[1]
+    plS = pl(1, *best_p)
+
+    covar = fit_res[1]
+    err_p = np.sqrt(np.diag(covar))
+
+    print("Power-law fit parameters from joint fit to IP in Stokes V: S at 1 GHz = {0:3.2f}+/-{2:3.2f}mJy, alpha = {1:3.2f}+/-{3:3.2f}".format(plS, pla, err_p[0], err_p[1]))
+
+    no_samps = 1000
+    samps = np.random.multivariate_normal(
+        fit_res[0], fit_res[1], size=no_samps
+    ).swapaxes(0,1)
+
+    models = pl(
+        nu[:, None],
+        *samps
+    )
+    q16, q50, q84 = np.percentile(models, [16, 50, 84], axis=1)
+
+    fig = plt.figure(figsize=(5*cm,5*cm))
+    ax = fig.add_subplot(111)
+    ax.scatter(freqs_m, 1000*V_m, color='purple', alpha=0.3, marker='.', s=2, lw=0.5, zorder=10)
+    ax.scatter(freqs_m_b, 1000*V_m_b, color='purple', alpha=0.9, marker='.', s=6, lw=0.5, zorder=10, label="MeerKAT")
+    ax.errorbar(freqs_m_b, 1000*V_m_b, yerr=1000*err_m_b, color='purple', alpha=0.9, elinewidth=0.5, lw=0, zorder=5)
+    ax.scatter(freqs_a, 1000*V_a, color=color['I'], alpha=0.2, marker='s', s=2, lw=0.5, zorder=10)
+    ax.scatter(freqs_a_b, 1000*V_a_b, color='black', alpha=0.9, marker='s', s=6, lw=0.5, zorder=10, label="ASKAP")
+    ax.errorbar(freqs_a_b, 1000*V_a_b, yerr=1000*err_a_b, color='black', alpha=0.9, elinewidth=0.5, lw=0, zorder=5)
+    ax.plot(
+        nu,
+        q50,
+        lw=0.5,
+        color='red',
+    )
+    ax.fill_between(
+        nu,
+        q16, q84,
+        alpha=0.3,
+        color='red'
+    )
+#    ax.plot(freqs_a, 1000*I_a_smoothed, color='black', alpha=0.8, lw=0.5)
+#    ax.errorbar(freqs_a, 1000*I_pulse, yerr=1000*rms_arr, color=color['I'], alpha=0.8, elinewidth=0.5, lw=0, zorder=5)
+#    ax.axhline(np.nanmean(1000*I_pulse), color=color['I'], lw=0.5)
+    ax.axvspan(freqs_m[ib[0]],freqs_m[ib[1]], color='yellow', alpha=0.15)
+    ax.axvspan(freqs_m[ib[2]], freqs_m[ib[3]], color='yellow', alpha=0.15)
+    ax.axvspan(freqs_m[ib[4]], freqs_m[-1], color='yellow', alpha=0.15)
+    ax.set_ylabel("Weighted brightness (mJy)")
+    ax.set_xlabel("Frequency / GHz")
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+#    ax.set_ylim(-20, 20)
+    ax.set_ylim(3, 50)
+    ax.legend(loc=1)
+
+    ax.yaxis.set_major_formatter(StrMethodFormatter("{x:.0f}"))
+    ax.yaxis.set_minor_formatter(StrMethodFormatter("{x:.0f}"))
+    ax.xaxis.set_major_formatter(StrMethodFormatter("{x:.1f}"))
+    ax.xaxis.set_minor_formatter(StrMethodFormatter("{x:.1f}"))
+
+    ax.text(0.1, 0.1, "$\\alpha = {0:3.2f}\pm{1:3.2f}$".format(pla, err_p[1]), transform=ax.transAxes,bbox=box_properties)
+    fig.savefig("Joint_spectrum_StokesV.pdf", bbox_inches="tight", dpi=300)
+    fig.savefig("Joint_spectrum_StokesV.png", bbox_inches="tight", dpi=300)
 
 if makeFold is True:
     # Fold the ASKAP data
@@ -1288,13 +1698,11 @@ if makeFold is True:
     ax6.tick_params(axis='y', direction='inout')
     ax6.set_yticklabels([])
 
-
-
     n_p = times_az[-1] / (2*P*24*3600)
     len_ip = (phase_end_ip - phase_start_ip) * 2*P *24*3600
     len_mp = (phase_end - phase_start) * 2*P *24*3600
     print(f"Successfully stacked {n_p:2.2f} periods, boosting S/N by {np.sqrt(n_p):2.2f}")
-    print(f"RMS of light curve is {rms/1000:2.0f} uJy/beam")
+    print(f"RMS of light curve is {rms*1000:2.0f} uJy/beam")
     print(f"Main pulse is about {len_mp:2.0f}s wide.")
     print(f"Inter-pulse is about {len_ip:2.0f}s wide.")
     print(f"Maximum linear polarisation of main (broad) pulse is {np.nanmax(L_frac[ind1]):3.0f}%")
@@ -1652,10 +2060,14 @@ if makeFold is True:
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
     bin_indices = np.digitize(phase[idx], bin_edges) - 1
 
-    I_sums = np.bincount(bin_indices, weights=1000*ilc_m[idx], minlength=num_bins)
-    Q_sums = np.bincount(bin_indices, weights=1000*qlc_m[idx], minlength=num_bins)
-    U_sums = np.bincount(bin_indices, weights=1000*ulc_m[idx], minlength=num_bins)
-    V_sums = np.bincount(bin_indices, weights=1000*vlc_m[idx], minlength=num_bins)
+#    I_sums = np.bincount(bin_indices, weights=1000*ilc_m[idx], minlength=num_bins)
+#    Q_sums = np.bincount(bin_indices, weights=1000*qlc_m_corr[idx], minlength=num_bins)
+#    U_sums = np.bincount(bin_indices, weights=1000*ulc_m_corr[idx], minlength=num_bins)
+#    V_sums = np.bincount(bin_indices, weights=1000*vlc_m[idx], minlength=num_bins)
+    I_sums = get_weighted_sum(bin_indices, 1000*ilc_m[idx])
+    Q_sums = get_weighted_sum(bin_indices, 1000*qlc_m_corr[idx])
+    U_sums = get_weighted_sum(bin_indices, 1000*ulc_m_corr[idx])
+    V_sums = get_weighted_sum(bin_indices, 1000*vlc_m[idx])
 
     counts = np.bincount(bin_indices, minlength=num_bins)
 
@@ -1680,9 +2092,9 @@ if makeFold is True:
 
 trange = times_a / (24*3600)
 # Note the addition of 1 period here
-phase = np.mod(trange - T0 + P, 2*P)/(2*P)
+phase = np.mod(trange - T0, 2*P)/(2*P)
 # and half a turn of phase here, +1 to get away from +/-zero where everything gets labelled zero
-pulsenums = (2.5 + pulsenum(trange)).astype('int')
+pulsenums = (pulsenum(trange)).astype('int')
 # Makes it easier to see the lightcurves
 minpulsenum = pulsenums[0]
 maxpulsenum = pulsenums[-1]
@@ -1742,8 +2154,10 @@ if makeACF is True:
        
 # TODO fix this since the change to the ephemeris broke it
     # The interesting pulses are 2, 4, and 13
-    phase_start = 0.47
-    phase_end = 0.55
+#phase_start = 0.44 + 0.5
+#phase_end = 0.55 + 0.5 - 1
+    #phase_start = 0.47
+    #phase_end = 0.55
     cutoffs = [-0.2, 0.78, 0.5]
     ts = 10 # seconds == sample time
     fig = plt.figure(figsize=(17.9*cm,10*cm))
@@ -1751,7 +2165,8 @@ if makeACF is True:
     ax1 = fig.add_subplot(231)
     n = 2
     nsec = 200
-    ind = np.logical_and(np.logical_and(phase>phase_start, phase<phase_end), pulsenums==n)
+    ind = np.logical_and(np.logical_or(phase<phase_start, phase>phase_end), pulsenums==n)
+    print(ind)
     ax1.plot(times_az[ind], 1000*ilc_a[ind], color=color["I"], alpha=0.8, lw=0.5)
 # Representative error bar
     ax1.errorbar(
