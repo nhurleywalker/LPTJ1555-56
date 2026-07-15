@@ -31,7 +31,7 @@ SPECIND = -1.5
 CALFREQ = 1.e9 # (1 GHz)
 
 # If you've run this already, you can make these False and save some time
-ASKAPPBCorr = True
+ASKAPPBCorr = False
 MKTPBCorr = False
 
 PARAMS = {
@@ -82,6 +82,8 @@ def make_light_curve(dsfile, coords):
 # One of the MeerKAT observations has an airplane fly through the first 50 seconds
     if stem == "CB1716830412":
         ds["DS"][0:50,:,:] = np.nan
+# Also Scott didn't flag the RFI for some reason
+        ds["DS"][:,315:535,:] = np.nan
 # This one too!!
     if stem == "CB1636329974":
         ds["DS"][0:25,:,:] = np.nan
@@ -92,7 +94,11 @@ def make_light_curve(dsfile, coords):
 # Do some RFI flagging
     It = np.real(ds["DS"][:,:,0]+ds["DS"][:,:,3])/2
     Qt = np.real((ds["DS"][:,:,0]-ds["DS"][:,:,3]))/2
-    spec_std = np.nanstd(Qt, axis=0)
+# This one has no Stokes Q
+    if stem == "CB1716830412":
+        spec_std = np.nanstd(It, axis=0)
+    else:
+        spec_std = np.nanstd(Qt, axis=0)
     xrange = np.arange(0,len(spec_std))
     deg = 3
     p = np.polynomial.Polynomial.fit(xrange[~np.isnan(spec_std)], spec_std[~np.isnan(spec_std)], deg=deg)
@@ -149,11 +155,17 @@ def get_source() -> Source:
 
     # Pulse ephemeris
     askap_loc = EarthLocation.of_site('mwa')
-    topocentric_pepoch = Time(59713.512505, format='mjd', scale="utc", location=askap_loc)
+    topocentric_pepoch = Time(59713.42655646942, format='mjd', scale="utc", location=askap_loc)
     ltt_bary = topocentric_pepoch.light_travel_time(j1555_coord, kind="barycentric")
     barycentric_pepoch = topocentric_pepoch.tdb + ltt_bary
-    period =  0.04319854*u.day
+    period = (62.205893 / (24*60))*u.day
     period_err = 0.0000136*u.day
+
+# Most up to date, from the paper
+#T0 = 59713.42655646942
+#P = 62.205893 / (2*24*60)
+
+
 
     J1555 = Source(
         coord=j1555_coord,
@@ -279,6 +291,7 @@ def plot_folded_lightcurves(
             period=source.period,
             phi0=0.5,
         )
+            #phi0=0,
 
         # Row indices for this observation, starting at 'next_base_row'
         base_row = next_base_row
@@ -318,6 +331,10 @@ def plot_folded_lightcurves(
     # Axis limits
     ax.set_xlim(0.0, 1.0)
     ax.set_xlabel("Phase")
+# This replaces the phase labels -- USE WITH CAUTION -- MAKE SURE YOU CHANGE phi0
+#    labels = [item.get_text() for item in ax.get_xticklabels()]
+    labels = ['0.5', '0.75', '0.0', '0.25', '0.5']
+    ax.set_xticklabels(labels)
 
     # Apply y-ticks at the top row of each observation
     ax.set_yticks(ytick_pos)
@@ -331,6 +348,7 @@ def deripple_short(t, lc):
     return lc - p(t)
 
 def deripple_long(times_m, ilc_m):
+
     # First break the data into four segments
     tdiff = times_m[1:] - times_m[0:-1]
     tbreak = np.where(np.abs(tdiff) > 50)[0]
@@ -339,79 +357,62 @@ def deripple_long(times_m, ilc_m):
     seg2_end = tbreak[1]+1
     seg3_end = tbreak[2]+1
 
-    # I noticed the first and last samples are bad in each scan, so we will flag those
+    cutoff = 0.003 # Jy
 
     # Segment 1
     deg = 3
-    vmin, vmax = -10, 30
-    b = 3 # b for buffer
 
     t = times_m[:seg1_end]
-    t_fit = times_m[b:seg1_end-b]
     y = ilc_m[:seg1_end]
-    y_fit = ilc_m[b:seg1_end-b]
-    p = np.polynomial.Polynomial.fit(t_fit, y_fit, deg=deg)
+    p = np.polynomial.Polynomial.fit(t, y, deg=deg)
+    y_smooth = p(t)
+    # Sigma-clip
+    y_fit = y[np.abs(y - p(t))<cutoff]
+    t_fit = t[np.abs(y - p(t))<cutoff]
+    p = np.polynomial.Polynomial.fit(t_fit,y_fit, deg=deg)
     y_smooth = p(t)
 
     ilc_m[:seg1_end] = y - y_smooth
-    # And now flag the buffer
-    ilc_m[0:b] = np.nan
-    ilc_m[seg1_end-b:seg1_end] = np.nan
 
     # Segment 2
-    deg = 3
-    vmin, vmax = -30, 30
-    b = 10 # b for buffer
     t = times_m[seg1_end:seg2_end]
-    t_fit = times_m[seg1_end+b:seg2_end-b]
     y = ilc_m[seg1_end:seg2_end]
-    y_fit = ilc_m[seg1_end+b:seg2_end-b]
+    p = np.polynomial.Polynomial.fit(t, y, deg=deg)
+    y_smooth = p(t)
+    # Sigma-clip
+    y_fit = y[np.abs(y - p(t))<cutoff]
+    t_fit = t[np.abs(y - p(t))<cutoff]
     p = np.polynomial.Polynomial.fit(t_fit, y_fit, deg=deg)
     y_smooth = p(t)
 
     ilc_m[seg1_end:seg2_end] = y - y_smooth
-    # And now flag the buffer
-    ilc_m[seg1_end:seg1_end+b] = np.nan
-    ilc_m[seg2_end-b:seg2_end] = np.nan
+
 
     # Segment 3
-    deg = 6
-    vmin, vmax = -30, 25
-    b = 10 
     t = times_m[seg2_end:seg3_end]
-    t_fit = times_m[seg2_end+b:seg3_end-b]
     y = ilc_m[seg2_end:seg3_end]
-    y_fit = ilc_m[seg2_end+b:seg3_end-b]
-    p = np.polynomial.Polynomial.fit(t_fit, y_fit, deg=deg)
+    p = np.polynomial.Polynomial.fit(t, y, deg=deg)
     y_smooth = p(t)
 
-    # In the case of this segment, there is a lot of gnarly RFI, and the pulse itself is quite bright, so do some sigma-clipping
-    new_y_fit = y_fit[np.abs(y_fit - p(t_fit))<0.003]
-    new_t_fit = t_fit[np.abs(y_fit - p(t_fit))<0.003]
-
-    p = np.polynomial.Polynomial.fit(new_t_fit, new_y_fit, deg=deg)
+    # Sigma-clip
+    y_fit = y[np.abs(y - p(t))<cutoff]
+    t_fit = t[np.abs(y - p(t))<cutoff]
+    p = np.polynomial.Polynomial.fit(t_fit, y_fit, deg=deg)
     y_smooth = p(t)
 
     ilc_m[seg2_end:seg3_end] = y - y_smooth
-    # And now flag the buffer
-    ilc_m[seg2_end:seg2_end+b] = np.nan
-    ilc_m[seg3_end-b:seg3_end] = np.nan
 
     # Segment 4
-    vmin, vmax = -10, 60
-    deg = 3
-    b = 10
     t = times_m[seg3_end:]
-    t_fit = times_m[seg3_end+b:-b]
     y = ilc_m[seg3_end:]
-    y_fit = ilc_m[seg3_end+b:-b]
+    p = np.polynomial.Polynomial.fit(t, y, deg=deg)
+    y_smooth = p(t)
+    # Sigma-clip
+    y_fit = y[np.abs(y - p(t))<cutoff]
+    t_fit = t[np.abs(y - p(t))<cutoff]
     p = np.polynomial.Polynomial.fit(t_fit, y_fit, deg=deg)
     y_smooth = p(t)
-
     ilc_m[seg3_end:] = y - y_smooth
-    # And now flag the buffer
-    ilc_m[seg3_end:seg3_end+b] = np.nan
-    ilc_m[-b:] = np.nan
 
     return ilc_m
 
@@ -476,9 +477,7 @@ def main():
     dynspecs = sorted(glob.glob("./averaged_dynspec/SB*.pkl"))
     sbids = np.array([int(Path(dsfile).stem.split("SB")[1]) for dsfile in dynspecs])
 
-    # MeerKAT data -- currently just two pkls
     # Preprocessing means applying the primary beam
-    dynspecs_m = ["./dynspec/1652551867-sdp-l0_2026-05-22T14-51-05_zBI_nominbl.pkl", "./dynspec/1656147142-sdp-l0_2026-06-08T16-46-06_bOB.pkl"]
     dynspecs_m = glob.glob("./dynspec/1*pkl")
     
     if MKTPBCorr is True:
@@ -492,6 +491,15 @@ def main():
             for freq in ds["FREQS"]:
                 pb_vals.append(MKCosBeam(get_beam_pos_mkt(cbid).separation(J1555.coord).deg, freq))
             pb_vals = np.array(pb_vals) 
+# This is the one that Scott calibrated, which only has Stokes I already
+#            if cbid == 1716830412:
+#                ds["DS"] /= np.tile(pb_vals[None, :, None], (ds["DS"].shape[0], 1, 1))
+#                print(ds["DS"].shape)
+# Just duplicate the Stokes I (which is currently occupying 'XX') to XY, YX, YY
+#                ds["DS"] = np.tile(ds["DS"], (1, 1, 4))
+#                print(ds["DS"].shape)
+#
+#            else:
             ds["DS"] /= np.tile(pb_vals[None, :, None], (ds["DS"].shape[0], 1, 4))
             with open(f'./averaged_dynspec/CB{cbid:010d}.pkl', 'wb') as file:
                 pickle.dump(ds, file)
@@ -529,11 +537,11 @@ def main():
         maxs.append(np.nanmax(l))
         rmss.append(np.nanstd(l))
         freqs.append(fc)
-        if stem == "CB1716830412":
+#        if stem == "CB1716830412":
 # This one has such high noise that it blows up the light curve plot, so bring it down just for plotting
-            lcs.append(l/100)
-        else:
-            lcs.append(l)
+#            lcs.append(l/100)
+#        else:
+        lcs.append(l)
         colors.append('purple')
 
     ids = np.concatenate([sbids, cbids])
