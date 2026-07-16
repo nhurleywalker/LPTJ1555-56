@@ -2388,6 +2388,7 @@ if makeACF is True:
     phase_m = np.mod(trange_m - T0 + P, 2*P)/(2*P)
     pulsenums_m = (pulsenum(trange_m) + 0.5).astype('int')
 
+
     # Plotting to find out what the interesting pulses are
     for n in range(minpulsenum, maxpulsenum):
         fig = plt.figure(figsize=(5,5))
@@ -2405,12 +2406,18 @@ if makeACF is True:
     ts = 10 # seconds == sample time
     fig = plt.figure(figsize=(17.9*cm,10*cm))
     # ASKAP Pulse 2
-    ax1 = fig.add_subplot(231)
+    #ax1 = fig.add_subplot(231)
+    ax1 = fig.add_axes([0.1,0.5,0.25,0.6])
     n = 2
     nsec = 200
     ind = np.logical_and(np.logical_and(phase>phase_start_acf, phase<phase_end_acf), pulsenums==n)
     ax1.plot(times_az[ind], 1000*ilc_a[ind], color=color["I"], alpha=0.8, lw=0.5)
+    ax1.plot(times_az[ind], 1000*qlc_a[ind], color=color["Q"], alpha=0.8, lw=0.5)
+    ax1.plot(times_az[ind], 1000*ulc_a[ind], color=color["U"], alpha=0.8, lw=0.5)
+    ax1.plot(times_az[ind], 1000*vlc_a[ind], color=color["V"], alpha=0.8, lw=0.5)
     # Representative error bar
+    tr = ax1.transAxes + ax1.transData.inverted()
+    x, y = tr.transform((0.2, 0.8))
     ax1.errorbar(
         3775, 27.5, 
         yerr=2,
@@ -2423,7 +2430,8 @@ if makeACF is True:
     ax1.set_ylabel("Flux density / mJy")
     ax1.set_xlabel("Time / s")
     ax1.set_title("Pulse 2: ASKAP")
-    ax2 = fig.add_subplot(234)
+    #ax2 = fig.add_subplot(234)
+    ax2 = fig.add_axes([0.1,0.1,0.25,0.3])
     acorr = np.correlate(ilc_a[ind], ilc_a[ind], 'full')[len(ilc_a[ind])-1:]
     t = ts*np.arange(0,len(acorr),1)
     ax2.plot(t, acorr/np.nanmax(acorr), alpha=1, lw=0.5, color="darkblue")
@@ -2431,17 +2439,24 @@ if makeACF is True:
     # Find peak of auto-correlation -- excepting the 0th lag
     peak = np.argmax(acorr[1:])
     ax2.axvline(t[1:][peak], color='darkred', lw=0.5, alpha=0.8)
+    ax2.set_ylim(0.2, 1)
     ax2.set_ylabel("Normalised power")
     ax2.set_xlabel("Time / s")
 
     # ASKAP Pulse 4
-    ax3 = fig.add_subplot(232)
+    #ax3 = fig.add_subplot(232)
+    ax3 = fig.add_axes([0.4,0.5,0.25,0.6])
     n = 4
     nsec = 200
     ind = np.logical_and(np.logical_and(phase>phase_start_acf, phase<phase_end_acf), pulsenums==n)
     ax3.plot(times_az[ind], 1000*ilc_a[ind], color=color["I"], alpha=0.8, lw=0.5)
+    ax3.plot(times_az[ind], 1000*qlc_a[ind], color=color["Q"], alpha=0.8, lw=0.5)
+    ax3.plot(times_az[ind], 1000*ulc_a[ind], color=color["U"], alpha=0.8, lw=0.5)
+    ax3.plot(times_az[ind], 1000*vlc_a[ind], color=color["V"], alpha=0.8, lw=0.5)
+    tr = ax3.transAxes + ax3.transData.inverted()
+    x, y = tr.transform((0.2, 0.8))
     ax3.errorbar(
-        11270, 17.5, 
+        11270, 17.5,
         yerr=2,
         fmt='none', 
         ecolor='black', 
@@ -2451,7 +2466,9 @@ if makeACF is True:
     )
     ax3.set_xlabel("Time / s")
     ax3.set_title("Pulse 4: ASKAP")
-    ax4 = fig.add_subplot(235)
+
+    #ax4 = fig.add_subplot(235)
+    ax4 = fig.add_axes([0.4,0.1,0.25,0.3])
     acorr = np.correlate(ilc_a[ind], ilc_a[ind], 'full')[len(ilc_a[ind])-1:]
     t = ts*np.arange(0,len(acorr),1)
     ax4.plot(t, acorr/np.nanmax(acorr), alpha=1, lw=0.5, color="darkblue")
@@ -2459,27 +2476,34 @@ if makeACF is True:
     # Find peak of auto-correlation -- excepting the 0th lag
     peak = np.argmax(acorr[1:])
     ax4.axvline(t[1:][peak], color='darkred', lw=0.5, alpha=0.8)
+    ax4.set_ylim(0.2, 1)
     ax4.set_xlabel("Time / s")
 
     # MeerKAT pulse 13
     ts = 8 # seconds == sample time
-    ax5 = fig.add_subplot(233)
+    #ax5 = fig.add_subplot(233)
+    ax5 = fig.add_axes([0.7,0.5,0.25,0.6])
     n = 13
     nsec = 150
     ind = np.logical_and(np.logical_and(np.logical_and(phase_m>phase_start_acf, phase_m<phase_end_acf), pulsenums_m==n), ~np.isnan(ilc_m))
-    ax5.plot(times_mz[ind], 1000*ilc_m[ind], color='purple', alpha=0.8, lw=0.5)
+    ax5.plot(times_mz[ind], 1000*ilc_m[ind], color=color['I'], alpha=0.8, lw=0.5, label='I')
+    ax5.plot(times_mz[ind], 1000*qlc_m_corr[ind], color=color['Q'], alpha=0.8, lw=0.5, label='Q')
+    ax5.plot(times_mz[ind], 1000*ulc_m_corr[ind], color=color['U'], alpha=0.8, lw=0.5, label='U')
+    ax5.plot(times_mz[ind], 1000*vlc_m[ind], color=color['V'], alpha=0.8, lw=0.5, label='V')
     ax5.set_xlabel("Time / s")
     ax5.set_title("Pulse 13: MeerKAT")
     ax5.errorbar(
         16915, 11.75, 
         yerr=0.44,
         fmt='none', 
-        ecolor='purple',
+        ecolor='black',
         elinewidth=1.5, 
         capsize=4, 
         capthick=1.5
     )
-    ax6 = fig.add_subplot(236)
+    ax5.legend()
+    #ax6 = fig.add_subplot(236)
+    ax6 = fig.add_axes([0.7,0.1,0.25,0.3])
     acorr = np.correlate(ilc_m[ind], ilc_m[ind], 'full')[len(ilc_m[ind])-1:]
     t = ts*np.arange(0,len(acorr),1)
     ax6.plot(t, acorr/np.nanmax(acorr), alpha=1, lw=0.5, color="darkblue")
@@ -2487,9 +2511,10 @@ if makeACF is True:
     # Find peak of auto-correlation -- excepting the 0th lag
     peak = np.argmax(acorr[1:])
     ax6.axvline(t[1:][peak], color='darkred', lw=0.5, alpha=0.8)
+    ax6.set_ylim(0.2, 1)
     ax6.set_xlabel("Time / s")
 
-    fig.tight_layout()
+    #fig.tight_layout()
     fig.savefig("ACF.png", bbox_inches="tight")
     fig.savefig("ACF.pdf", bbox_inches="tight")
 
