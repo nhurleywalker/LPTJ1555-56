@@ -21,11 +21,11 @@ import sys
 
 from primary_beams import GaussianPB, MKCosBeam, get_beam_pos_mkt
 
-makeDynspec = True
+makeDynspec = False
 makeLightcurves = False
 makePaperDS = False
 makePaperMKTDS = False
-makeFold = True
+makeFold = False
 # NB: if you want to makePA or makeRM or makePhaseBin, you must also makeFold
 makePA = False
 makeRM = False
@@ -40,7 +40,7 @@ makeSpikySpectrum = False
 makeSecondIPSpectrumV = False
 makeSecondIPSpectrum = False
 tryBandSplit = False
-makeACF = False
+makeACF = True
 
 cm = 1/2.54  # centimeters in inches
 # Figure font size
@@ -1399,113 +1399,6 @@ if makePaperMKTDS:
 
     fig.savefig("MeerKAT_dynamic_spectra_lcs.pdf", bbox_inches="tight", dpi=300)
 
-
-if makePaperMKTDSold:
-    # This will be a full-page plot
-    fig = plt.figure(figsize=(17.9*cm, 8*cm))
-    extent = [0, times_mz[-1]/3600, freqs_m[16], freqs_m[-1]]
-    # Top-left, Stokes I
-    lw = 0.5
-    alpha = 0.8
-    vmin, vmax = -3, 20
-    ax_I_ds = fig.add_axes([0.1, 0.53, 0.3, 0.3])
-    cax_I = fig.add_axes([0.41, 0.53, 0.015, 0.3])
-    Ids = ax_I_ds.imshow(1000*It_m[:,16:].T, interpolation='none', origin='lower',vmin = vmin, vmax=vmax, aspect='auto', cmap=cmap["I"], extent=extent)
-    fig.colorbar(Ids, cax = cax_I)
-    ax_I_lc = fig.add_axes([0.1, 0.83, 0.3, 0.1])
-    ax_I_lc.plot(times_mz/3600, 1000*ilc_m, lw=lw, color=color["I"], alpha=alpha, label="I")
-
-    # Define a nice diverging colormap that de-emphasises the noisy values
-    base_cmap = plt.get_cmap('bwr')
-    # Increase the exponent (e.g., to 3 or 4) to make it fade even slower near white
-    exponent = 2.0
-    num_points = 256
-    x = np.linspace(-1, 1, num_points)
-    # Warp the steps using a power function, then shift back to a 0-to-1 range
-    # This clusters points heavily around the center (0.5), pushing colors to the edges
-    warped_x = np.sign(x) * (np.abs(x) ** exponent)
-    colors_sampled = base_cmap((warped_x + 1) / 2)
-    # Create the new colormap from these warped colors
-    slow_fade_cmap = colors.ListedColormap(colors_sampled)
-    # 4. Normalize symmetrically around 0 so the center is exactly white
-    max_abs = 20
-    my_norm = colors.Normalize(vmin=-max_abs, vmax=max_abs)
-
-    # Top-right, Stokes Q
-    ax_Q_ds = fig.add_axes([0.5, 0.53, 0.3, 0.3])
-    cax_Q = fig.add_axes([0.81, 0.53, 0.015, 0.3])
-    Qds = ax_Q_ds.imshow(1000*Qt_m_corr[:,16:].T, interpolation='none', origin='lower', aspect='auto', extent=extent, cmap=slow_fade_cmap, norm=my_norm)
-    fig.colorbar(Qds, cax = cax_Q, label='Flux density / mJy')
-    ax_Q_lc = fig.add_axes([0.5, 0.83, 0.3, 0.1])
-    ax_Q_lc.plot(times_mz/3600, 1000*qlc_m_corr, lw=lw, color=color["Q"], alpha=alpha, label="Q")
-    # Bottom-left, Stokes U
-    ax_U_ds = fig.add_axes([0.1, 0.1, 0.3, 0.3])
-    cax_U = fig.add_axes([0.41, 0.1, 0.015, 0.3])
-    Uds = ax_U_ds.imshow(1000*Ut_m_corr[:,16:].T, interpolation='none', origin='lower', aspect='auto', extent=extent, cmap=slow_fade_cmap, norm=my_norm)
-    fig.colorbar(Uds, cax = cax_U)
-    ax_U_lc = fig.add_axes([0.1, 0.4, 0.3, 0.1])
-    ax_U_lc.plot(times_mz/3600, 1000*ulc_m_corr, lw=lw, color=color["U"], alpha=alpha, label="U")
-    # Bottom-right, Stokes V
-    ax_V_ds = fig.add_axes([0.5, 0.1, 0.3, 0.3])
-    cax_V = fig.add_axes([0.81, 0.1, 0.015, 0.3])
-    Vds = ax_V_ds.imshow(1000*Vt_m[:,16:].T, interpolation='none', origin='lower', aspect='auto', extent=extent, cmap=slow_fade_cmap, norm=my_norm)
-    fig.colorbar(Vds, cax = cax_V, label='Flux density / mJy')
-    ax_V_lc = fig.add_axes([0.5, 0.4, 0.3, 0.1])
-    ax_V_lc.plot(times_mz/3600, 1000*vlc_m, lw=lw, color=color["V"], alpha=alpha, label="V")
-
-    offset = times_m[0]
-# TODO FIX INTO FOUR PANELS
-    for ax in [ax_I_lc, ax_Q_lc, ax_U_lc, ax_V_lc]:
-        ax.set_xlim(times_mz[0]/3600, times_mz[-1]/3600)
-        ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left")
-        for i in range(-3, 35):
-            ax.axvline((ephem(i)*24*3600 - offset)/3600, alpha=0.1, color='grey')
-    for ax in [ax_I_ds, ax_U_ds]:
-        ax.set_ylabel("Frequency / GHz")
-
-    for ax in [ax_I_lc, ax_U_lc]:
-        ax.set_ylabel("$S$ / mJy")
-
-    tstart = nicedate(Time(times_m[0]/(24*3600), format='mjd', scale='utc'))
-    for ax in [ax_U_ds, ax_V_ds]:
-        ax.set_xlabel(f"Time / hours since {tstart}")
-
-    for ax in [ax_Q_ds, ax_Q_lc, ax_I_ds, ax_I_lc, ax_U_lc, ax_V_lc]:
-        ax.set_xticklabels([])
-
-    for ax in [ax_Q_ds, ax_V_ds]:
-        ax.set_yticklabels([])
-
-    fig.savefig("MeerKAT_dynamic_spectra_lcs.pdf", bbox_inches="tight", dpi=300)
-
-
-
-# Old data problems, I think
-# Can we use this to constrain the RM and/or test whether there is Faraday rotation?
-# I noticed there is a nasty RFI spike in channel index 871
-# And values up to index 16 are not trustworthy
-#Qt_m[:, 871] = np.nan
-#Ut_m[:, 871] = np.nan
-#Vt_m[:, 871] = np.nan
-
-#Qt_m[:, 0:17] = np.nan
-#Ut_m[:, 0:17] = np.nan
-#Vt_m[:, 0:17] = np.nan
-
-# These are really only informative for finding RFI
-#for i in range(indstart, indend):
-#    if ilc_m[i] > 0.001:
-#        fig = plt.figure(figsize=(8,5))
-#        ax = fig.add_subplot(111)
-##        ax.plot(freqs_m, 1000*It_m[i], color = color["I"], lw=0.5,  label="Stokes I")
-#        ax.plot(freqs_m, 1000*Qt_m[i], color = color["Q"], lw=0.5,  label="Stokes Q")
-#        ax.plot(freqs_m, 1000*Ut_m[i], color = color["U"], lw=0.5,  label="Stokes U")
-#        ax.plot(freqs_m, 1000*Vt_m[i], color = color["V"], lw=0.5,  label="Stokes V")
-#        ax.set_xlabel("Frequency / GHz")
-#        ax.set_ylabel("Flux density / mJy")
-#        t = times_m[i]
-#        fig.savefig(f"MeerKAT_IQUV_spectrum_{t}.png", bbox_inches="tight")
-
 # find the common time range
 
 tstart = np.nanmin([arr3["TIMES"][0], mkt["TIMES"][0]])
@@ -1823,9 +1716,10 @@ if makeJointSpectrumV is True:
 
     ax.text(0.1, 0.1, "$\\alpha = {0:3.2f}\pm{1:3.2f}$".format(pla, err_p[1]), transform=ax.transAxes,bbox=box_properties)
     fig.savefig("Joint_spectrum_StokesV.pdf", bbox_inches="tight", dpi=300)
-fig.savefig("Joint_spectrum_StokesV.png", bbox_inches="tight", dpi=300)
+    fig.savefig("Joint_spectrum_StokesV.png", bbox_inches="tight", dpi=300)
 
 if makeFold is True:
+    print("Folding...")
     # Fold the ASKAP data
     # Put these into MJD (instead of MJD seconds)
     trange = times_a / (24*3600)
@@ -2041,7 +1935,7 @@ if makeFold is True:
 
     n_p = times_az[-1] / (2*P*24*3600)
     len_ip = (phase_end_ip - phase_start_ip) * 2*P *24*3600
-    len_mp = (phase_end - phase_start) * 2*P *24*3600
+    len_mp = (1 + phase_start - phase_end) * 2*P *24*3600
     print(f"Successfully stacked {n_p:2.2f} periods, boosting S/N by {np.sqrt(n_p):2.2f}")
     print(f"RMS of light curve is {rms*1000:2.0f} uJy/beam")
     print(f"Main pulse is about {len_mp:2.0f}s wide.")
@@ -2050,6 +1944,10 @@ if makeFold is True:
     print(f"Maximum linear polarisation of inter (narrow) pulse is {np.nanmax(L_frac[ind2]):3.0f}%")
     print(f"Maximum absolute circular polarisation of main (broad) pulse is {np.nanmax(np.abs(V_frac[ind1])):3.0f}%")
     print(f"Maximum absolute circular polarisation of inter (narrow) pulse is {np.nanmax(np.abs(V_frac[ind2])):3.0f}%")
+    print(f"Mean linear polarisation of main (broad) pulse is {np.nanmean(L_frac[ind1]):3.0f}%")
+    print(f"Mean linear polarisation of inter (narrow) pulse is {np.nanmean(L_frac[ind2]):3.0f}%")
+    print(f"Mean absolute circular polarisation of main (broad) pulse is {np.nanmean(np.abs(V_frac[ind1])):3.0f}%")
+    print(f"Mean absolute circular polarisation of inter (narrow) pulse is {np.nanmean(np.abs(V_frac[ind2])):3.0f}%")
     fig.savefig("Folded_EMU_light_curve.pdf", bbox_inches="tight")
 
 if makePA is True:
