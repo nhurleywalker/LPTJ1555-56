@@ -2333,6 +2333,7 @@ trange = times_a / (24*3600)
 # Note the addition of 1 period here
 phase = np.mod(trange - T0, 2*P)/(2*P)
 # and half a turn of phase here, +1 to get away from +/-zero where everything gets labelled zero
+# Took out because they changed the ephemeris and we have to be on target
 pulsenums = (pulsenum(trange)).astype('int')
 # Makes it easier to see the lightcurves
 minpulsenum = pulsenums[0]
@@ -2340,9 +2341,8 @@ maxpulsenum = pulsenums[-1]
 
 # Now include MeerKAT data
 trange_m = times_m / (24*3600)
-phase_m = np.mod(trange_m - T0 + P, 2*P)/(2*P)
-# and half a turn of phase here, +1 to get away from +/-zero where everything gets labelled zero
-pulsenums_m = (2.5 + pulsenum(trange_m)).astype('int')
+phase_m = np.mod(trange_m - T0, 2*P)/(2*P)
+pulsenums_m = (pulsenum(trange_m)).astype('int')
 num_extra_mkt_panels = len(np.unique(pulsenums_m))
 
 num_panels = maxpulsenum - minpulsenum + num_extra_mkt_panels
@@ -2381,6 +2381,13 @@ for n in np.unique(pulsenums_m):
 
 if makeACF is True:
     # Similar to the above, just plot the interesting pulses, and their ACFs
+# We have to reset the phase calculation because the break across phase 0/1 for the main pulse really wrecks everything downstream
+    # Note the addition of 1 period here -- this centers the main pulse at 0.5
+    phase = np.mod(trange - T0 + P, 2*P)/(2*P)
+    pulsenums = (pulsenum(trange) + 0.5).astype('int')
+    phase_m = np.mod(trange_m - T0 + P, 2*P)/(2*P)
+    pulsenums_m = (pulsenum(trange_m) + 0.5).astype('int')
+
     # Plotting to find out what the interesting pulses are
     for n in range(minpulsenum, maxpulsenum):
         fig = plt.figure(figsize=(5,5))
@@ -2391,12 +2398,9 @@ if makeACF is True:
         ax.set_xlim(0.4, 0.6)
         fig.savefig(f"ASKAP_pulse{n}.png", bbox_inches="tight")
        
-    # TODO fix this since the change to the ephemeris broke it
     # The interesting pulses are 2, 4, and 13
-    #phase_start = 0.44 + 0.5
-    #phase_end = 0.55 + 0.5 - 1
-    #phase_start = 0.47
-    #phase_end = 0.55
+    phase_start_acf = phase_start - 0.5
+    phase_end_acf = phase_end +1 -0.5
     cutoffs = [-0.2, 0.78, 0.5]
     ts = 10 # seconds == sample time
     fig = plt.figure(figsize=(17.9*cm,10*cm))
@@ -2404,8 +2408,7 @@ if makeACF is True:
     ax1 = fig.add_subplot(231)
     n = 2
     nsec = 200
-    ind = np.logical_and(np.logical_or(phase<phase_start, phase>phase_end), pulsenums==n)
-    print(ind)
+    ind = np.logical_and(np.logical_and(phase>phase_start_acf, phase<phase_end_acf), pulsenums==n)
     ax1.plot(times_az[ind], 1000*ilc_a[ind], color=color["I"], alpha=0.8, lw=0.5)
     # Representative error bar
     ax1.errorbar(
@@ -2435,7 +2438,7 @@ if makeACF is True:
     ax3 = fig.add_subplot(232)
     n = 4
     nsec = 200
-    ind = np.logical_and(np.logical_and(phase>phase_start, phase<phase_end), pulsenums==n)
+    ind = np.logical_and(np.logical_and(phase>phase_start_acf, phase<phase_end_acf), pulsenums==n)
     ax3.plot(times_az[ind], 1000*ilc_a[ind], color=color["I"], alpha=0.8, lw=0.5)
     ax3.errorbar(
         11270, 17.5, 
@@ -2463,13 +2466,13 @@ if makeACF is True:
     ax5 = fig.add_subplot(233)
     n = 13
     nsec = 150
-    ind = np.logical_and(np.logical_and(np.logical_and(phase_m>phase_start, phase_m<phase_end), pulsenums_m==n), ~np.isnan(ilc_m))
+    ind = np.logical_and(np.logical_and(np.logical_and(phase_m>phase_start_acf, phase_m<phase_end_acf), pulsenums_m==n), ~np.isnan(ilc_m))
     ax5.plot(times_mz[ind], 1000*ilc_m[ind], color='purple', alpha=0.8, lw=0.5)
     ax5.set_xlabel("Time / s")
     ax5.set_title("Pulse 13: MeerKAT")
     ax5.errorbar(
         16915, 11.75, 
-        yerr=0.8,
+        yerr=0.44,
         fmt='none', 
         ecolor='purple',
         elinewidth=1.5, 
