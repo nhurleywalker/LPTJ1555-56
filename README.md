@@ -1,4 +1,4 @@
-# MKTJ1555-56 analysis code
+# LPT J1555−5631 analysis code
 
 Code for the analysis and figures in [Hyman et al. 2026](https://arxiv.org/abs/2609.34102): ASKAP (EMU) +
 MeerKAT observations of the source, plus the archival non-detection light
