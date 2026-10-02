@@ -1,6 +1,6 @@
 # MKTJ1555-56 analysis code
 
-Code for the analysis and figures in the MKTJ1555-56 paper: ASKAP (EMU) +
+Code for the analysis and figures in [Hyman et al. 2026](https://arxiv.org/abs/2609.34102): ASKAP (EMU) +
 MeerKAT observations of the source, plus the archival non-detection light
 curves and upper limits from every other observation of the field. 
 It runs through a single entry point, `run_analysis.py` 
