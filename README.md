@@ -63,13 +63,8 @@ every other observation of the field), which needs the raw per-observation
 pickles for the whole archive -- if you just want the two detection
 observations, name the stages you want explicitly instead of using `all`.
 
-### The MeerKAT primary-beam correction step now runs automatically
-
 The main analysis reads a single primary-beam-corrected MeerKAT pickle
-(`averaged_dynspec/CB1652551867.pkl`). Previously, that file only got
-created if you ran the old `archival_lightcurve.py` first with beam
-correction switched on -- an easy step to forget, since nothing else about
-the main analysis needed that script. Now, `data_io.load_meerkat_data`
+(`averaged_dynspec/CB1652551867.pkl`). `data_io.load_meerkat_data`
 checks whether that file exists and, if not, generates it on the spot from
 the raw pickle in `--dynspec-dir` (via `preprocessing.ensure_meerkat_file`).
 You'll see a line like:
